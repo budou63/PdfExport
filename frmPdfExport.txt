@@ -1,0 +1,538 @@
+Option Explicit
+
+' 出力対象ブック（アドイン化対応：ActiveWorkbook依存を排除）
+Private mTargetWb As Workbook
+
+' 出力対象ブックを設定（modPdfExportから呼ばれる）
+Public Sub SetTargetWorkbook(ByVal wb As Workbook)
+    Set mTargetWb = wb
+End Sub
+
+Private Sub LabelFileName_Click()
+
+End Sub
+
+'============================================================
+' シート＆ページ指定でPDF出力するためのUI
+'============================================================
+
+Private Sub UserForm_Initialize()
+    ' === 出力対象ブックの確定 ===
+    ' [FIX] SetTargetWorkbook が呼ばれていない場合はエラーを表示
+    ' （アドイン化対応：ThisWorkbook依存を完全に排除）
+    If mTargetWb Is Nothing Then
+        ' フォールバック：ActiveWorkbookを使用（SetTargetWorkbookが呼ばれていない場合）
+        ' ただし、これは本来 SetTargetWorkbook で設定されるべき
+        On Error Resume Next
+        Set mTargetWb = ActiveWorkbook
+        If Err.Number <> 0 Or mTargetWb Is Nothing Then
+            MsgBox "出力対象ブックが設定されていません。" & vbCrLf & _
+                   "アドインの初期化に問題がある可能性があります。", vbCritical
+            Exit Sub
+        End If
+        On Error GoTo 0
+    End If
+
+    ' === フォームサイズの固定 ===
+    With Me
+        .StartUpPosition = 1          ' 1 = CenterOwner（中央表示）
+        .Zoom = 100                   ' ズーム倍率を固定（これが変動の原因になる）
+        .Width = 600                  ' 横幅
+        .Height = 350                 ' 高さ
+    End With
+
+    ' === 必須コントロールの存在チェック ===
+    If Not ControlExists(Me, "optExportPdf") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "optExportPdf が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "optExportExcel") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "optExportExcel が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "lstSheets") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "lstSheets が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "txtOutDir") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "txtOutDir が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "txtFrom") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "txtFrom が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "txtTo") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "txtTo が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "chkAll") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "chkAll が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "lblInfo") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "lblInfo が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "txtFileName") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "txtFileName が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "cmdExport") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "cmdExport が見つかりません。", vbCritical
+        Exit Sub
+    End If
+
+    ' === 出力形式コントロールの初期化（PDF をデフォルト選択、Excel は非選択） ===
+    Me.Controls("optExportPdf").Value = True
+    Me.Controls("optExportExcel").Value = False
+    ' 同一グループ化（明示的に揃える）
+    Me.Controls("optExportPdf").GroupName = "grpExportFormat"
+    Me.Controls("optExportExcel").GroupName = "grpExportFormat"
+
+    ' === ListBox の初期化（複数選択可能） ===
+    Me.Controls("lstSheets").MultiSelect = fmMultiSelectMulti
+
+    Call LoadSheets
+    ' LoadSheets 内で UpdatePageRangeUI と ShowPageInfo が呼ばれる
+
+    ' === 前回の出力先を復元（なければデスクトップを初期値に） ===
+    Dim last As String
+    last = GetSetting("PdfExport", "Settings", "OutDir", "")
+    If Len(last) = 0 Then last = Environ$("USERPROFILE") & "\Desktop"
+    Me.Controls("txtOutDir").Text = last
+End Sub
+
+Private Sub cmdRefresh_Click()
+    Call LoadSheets
+End Sub
+
+Private Sub lstSheets_Click()
+    ' ListBox のクリック時にページ範囲UIを更新（正式イベント）
+    Call OnSheetSelectionChanged
+End Sub
+
+Private Sub lstSheets_Change()
+    ' Change イベントも拾っておく（念のため）
+    Call OnSheetSelectionChanged
+End Sub
+
+' シート選択変更時の共通処理
+Private Sub OnSheetSelectionChanged()
+    Call UpdatePageRangeUI
+    Call ShowPageInfo
+End Sub
+
+Private Sub chkAll_Click()
+    ' UpdatePageRangeUI で制御されるため、ここでは単純に有効/無効を切り替えるのみ
+    ' 複数選択時は UpdatePageRangeUI で chkAll.Enabled = False になっているため
+    ' このイベントは発生しない（念のためチェックは UpdatePageRangeUI に集約）
+    Call UpdatePageRangeUI
+End Sub
+
+Private Sub cmdBrowse_Click()
+    ' フォルダ選択ダイアログ
+    On Error GoTo EH
+    Dim fd As FileDialog
+    Set fd = Application.FileDialog(msoFileDialogFolderPicker)
+    With fd
+        .Title = "PDFの保存先フォルダを選択"
+        If Len(Trim$(txtOutDir.Text)) > 0 Then
+            .InitialFileName = Trim$(txtOutDir.Text)
+        Else
+            .InitialFileName = Environ$("USERPROFILE") & "\Desktop"
+        End If
+        If .Show = -1 Then
+            txtOutDir.Text = .SelectedItems(1)
+        End If
+    End With
+    Exit Sub
+EH:
+    MsgBox "フォルダ選択でエラーが発生しました。", vbExclamation
+End Sub
+
+Private Sub cmdExport_Click()
+    ' [FIX] 対象ブックが無効な場合は処理を中断
+    If mTargetWb Is Nothing Then
+        MsgBox "出力対象ブックが設定されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim selCount As Long
+    selCount = GetSelectedSheetCount()
+
+    If selCount = 0 Then
+        MsgBox "シートを選択してください。", vbExclamation
+        Exit Sub
+    End If
+
+    ' 出力先の簡易チェック
+    Dim outDir As String
+    outDir = Trim$(txtOutDir.Text)
+    If Len(outDir) = 0 Then
+        MsgBox "出力先フォルダを指定してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim fmt As ExportFormatType
+    fmt = GetSelectedFormatType()
+
+    ' ページ範囲の取得（単一選択時のみ有効）
+    Dim f As Variant, t As Variant
+    Dim allPages As Boolean
+
+    If selCount = 1 Then
+        ' 単一選択時：ページ範囲指定可能
+        allPages = chkAll.Value
+        If allPages Then
+            f = Empty: t = Empty
+        Else
+            If Len(Trim$(txtFrom.Text)) = 0 Or Len(Trim$(txtTo.Text)) = 0 Then
+                MsgBox "ページ範囲（開始/終了）を入力してください。", vbExclamation
+                Exit Sub
+            End If
+            f = CLng(Val(txtFrom.Text))
+            t = CLng(Val(txtTo.Text))
+            If f <= 0 Or t < f Then
+                MsgBox "ページ範囲の指定が不正です。", vbExclamation
+                Exit Sub
+            End If
+        End If
+    Else
+        ' 複数選択時：必ず全ページ
+        allPages = True
+        f = Empty: t = Empty
+    End If
+
+    ' 【修正】選択シートを一度配列に取得（最適化）
+    Dim selectedSheets() As String
+    Dim i As Long
+    ReDim selectedSheets(0 To selCount - 1)
+    For i = 0 To selCount - 1
+        selectedSheets(i) = GetSelectedSheetName(i)
+    Next i
+
+    ' 【修正】選択シート名の検証
+    For i = 0 To selCount - 1
+        If Len(selectedSheets(i)) = 0 Then
+            MsgBox "シート名の取得に失敗しました（インデックス: " & i & "）。", vbExclamation
+            Exit Sub
+        End If
+    Next i
+
+    ' 【修正】Excel出力かつ複数選択時は1つのファイルにまとめて保存
+    ' [FIX] mTargetWbを渡す
+    If fmt = ExportFormatExcelXlsx And selCount > 1 Then
+        Dim baseFileNameMulti As String
+        baseFileNameMulti = Trim$(txtFileName.Text)
+        On Error Resume Next
+        Call modPdfExport.Excel_複数シート出力実行(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
+        If Err.Number <> 0 Then
+            MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
+        End If
+        On Error GoTo 0
+        ' 成功したら保存（次回の初期値用）
+        SaveSetting "PdfExport", "Settings", "OutDir", outDir
+        Exit Sub
+    End If
+
+    ' PDF出力、またはExcel単一選択時：選択された各シートに対して個別に出力
+    Dim sh As String
+    Dim baseFileName As String
+    Dim fileNameForSheet As String
+    Dim successCount As Long
+    Dim failCount As Long
+    Dim failLog As String  ' 【修正】失敗ログを保持
+
+    baseFileName = Trim$(txtFileName.Text)
+    successCount = 0
+    failCount = 0
+    failLog = ""
+
+    For i = 0 To selCount - 1
+        sh = selectedSheets(i)
+        If Len(sh) = 0 Then
+            failCount = failCount + 1
+            failLog = failLog & "・シート名取得失敗（インデックス: " & i & "）" & vbCrLf
+            GoTo NextSheet
+        End If
+
+        ' 【修正】ファイル名の生成（複数選択時は必ずシート名を含む、上書き防止）
+        If selCount > 1 Then
+            If Len(baseFileName) > 0 Then
+                ' ベース名がある場合：ベース名_シート名（上書き防止）
+                fileNameForSheet = baseFileName & "_" & sh
+            Else
+                ' ベース名がない場合：空文字を渡すと modPdfExport 側で
+                ' 「シート名_yyyymmdd_HHMMSS」が自動生成される（シート名含む、上書き防止）
+                fileNameForSheet = ""
+            End If
+        Else
+            ' 単一選択時：そのまま使用
+            fileNameForSheet = baseFileName
+        End If
+
+        ' 【修正】出力実行（エラー情報を保持）
+        ' [FIX] mTargetWbを渡す
+        Dim errNum As Long
+        Dim errDesc As String
+        errNum = 0
+        errDesc = ""
+
+        On Error Resume Next
+        If fmt = ExportFormatPdf Then
+            Call modPdfExport.PDF_出力実行(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
+        Else
+            ' Excel単一選択時
+            Call modPdfExport.Excel_出力実行(sh, outDir, fileNameForSheet, mTargetWb)
+        End If
+
+        If Err.Number <> 0 Then
+            errNum = Err.Number
+            errDesc = Err.Description
+            Err.Clear
+        End If
+        On Error GoTo 0
+
+        If errNum = 0 Then
+            successCount = successCount + 1
+        Else
+            failCount = failCount + 1
+            ' 【修正】失敗情報をログに追加
+            failLog = failLog & "・" & sh & vbCrLf & _
+                      "  エラー番号: " & errNum & vbCrLf & _
+                      "  エラー内容: " & errDesc & vbCrLf
+        End If
+
+NextSheet:
+    Next i
+
+    ' 【修正】結果メッセージ（失敗時は詳細を表示）
+    If selCount > 1 Then
+        If failCount = 0 Then
+            MsgBox "すべてのシートの出力が完了しました。" & vbCrLf & _
+                   "出力件数: " & successCount & "件", vbInformation
+        Else
+            Dim msg As String
+            msg = "出力が完了しました。" & vbCrLf & _
+                  "成功: " & successCount & "件" & vbCrLf & _
+                  "失敗: " & failCount & "件" & vbCrLf & vbCrLf & _
+                  "【失敗詳細】" & vbCrLf & failLog
+            MsgBox msg, vbExclamation
+        End If
+    ElseIf failCount > 0 Then
+        ' 単一選択時でも失敗があれば表示
+        Dim msg2 As String
+        msg2 = "出力に失敗しました。" & vbCrLf & vbCrLf & _
+               "シート: " & selectedSheets(0) & vbCrLf & _
+               failLog
+        MsgBox msg2, vbCritical
+    End If
+
+    ' 成功したら保存（次回の初期値用）
+    SaveSetting "PdfExport", "Settings", "OutDir", outDir
+End Sub
+
+Private Sub cmdCancel_Click()
+    Unload Me
+End Sub
+
+'---------------------- 内部処理 ------------------------------
+
+Private Sub LoadSheets()
+    Dim ws As Worksheet
+    Dim lstSheets As MSForms.ListBox
+    
+    ' 対象ブックが無効な場合は処理を中断
+    If mTargetWb Is Nothing Then
+        Exit Sub
+    End If
+    
+    Set lstSheets = Me.Controls("lstSheets")
+    
+    lstSheets.Clear
+    For Each ws In mTargetWb.Worksheets
+        ' グラフシート等を除きたい場合は TypeName(ws)="Worksheet" をチェック
+        lstSheets.AddItem ws.Name
+    Next ws
+
+    Call UpdatePageRangeUI
+    Call ShowPageInfo
+End Sub
+
+Private Sub ShowPageInfo()
+    On Error Resume Next
+    Dim selCount As Long
+    selCount = GetSelectedSheetCount()
+
+    If selCount = 0 Then
+        Me.Controls("lblInfo").Caption = ""
+        Exit Sub
+    ElseIf selCount > 1 Then
+        Me.Controls("lblInfo").Caption = "複数選択時は全ページで個別出力します（" & selCount & "件選択中）"
+        Exit Sub
+    End If
+
+    ' 対象ブックが無効な場合は処理を中断
+    If mTargetWb Is Nothing Then
+        Me.Controls("lblInfo").Caption = ""
+        Exit Sub
+    End If
+
+    ' 単一選択時のみページ情報を表示
+    Dim sh As String
+    sh = GetSelectedSheetName(0)
+    If Len(sh) = 0 Then
+        Me.Controls("lblInfo").Caption = ""
+        Exit Sub
+    End If
+
+    ' mTargetWb から直接シートを取得してページ数を計算
+    Dim ws As Worksheet
+    Set ws = Nothing
+    On Error Resume Next
+    Set ws = mTargetWb.Worksheets(sh)
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        Me.Controls("lblInfo").Caption = "シートが見つかりません。"
+        Exit Sub
+    End If
+
+    Dim n As Long
+    n = 推定ページ数_内部(ws)
+    If n > 0 Then
+        Me.Controls("lblInfo").Caption = "推定ページ数: " & n & "（印刷範囲・倍率・改ページに依存）"
+    Else
+        Me.Controls("lblInfo").Caption = "推定ページ数を算出できませんでした。"
+    End If
+    On Error GoTo 0
+End Sub
+
+' シートオブジェクトから推定ページ数を計算（内部関数）
+Private Function 推定ページ数_内部(ByVal ws As Worksheet) As Long
+    If ws Is Nothing Then Exit Function
+    
+    Dim h As Long, v As Long
+    Dim savedActiveSheet As Worksheet
+    Dim savedActiveWorkbook As Workbook
+    Set savedActiveSheet = ActiveSheet  ' ActiveSheetの退避
+    Set savedActiveWorkbook = ActiveWorkbook  ' ActiveWorkbookの退避
+
+    On Error Resume Next
+    ws.Activate
+    h = ws.HPageBreaks.Count + 1
+    v = ws.VPageBreaks.Count + 1
+    推定ページ数_内部 = h * v
+    On Error GoTo 0
+
+    ' [FIX] ActiveSheet/ActiveWorkbookを元に戻す（副作用の最小化）
+    If Not savedActiveWorkbook Is Nothing Then
+        On Error Resume Next
+        savedActiveWorkbook.Activate
+        If Not savedActiveSheet Is Nothing Then
+            savedActiveSheet.Activate
+        End If
+        On Error GoTo 0
+    End If
+End Function
+
+' 選択されたシート数を取得
+Private Function GetSelectedSheetCount() As Long
+    Dim lstSheets As MSForms.ListBox
+    Dim i As Long
+    Dim count As Long
+
+    Set lstSheets = Me.Controls("lstSheets")
+
+    count = 0
+    For i = 0 To lstSheets.ListCount - 1
+        If lstSheets.Selected(i) Then
+            count = count + 1
+        End If
+    Next i
+
+    GetSelectedSheetCount = count
+End Function
+
+' 選択されたシート名を取得（index: 0始まり）
+Private Function GetSelectedSheetName(ByVal index As Long) As String
+    Dim lstSheets As MSForms.ListBox
+    Dim i As Long
+    Dim count As Long
+
+    Set lstSheets = Me.Controls("lstSheets")
+
+    count = 0
+    For i = 0 To lstSheets.ListCount - 1
+        If lstSheets.Selected(i) Then
+            If count = index Then
+                GetSelectedSheetName = lstSheets.List(i)
+                Exit Function
+            End If
+            count = count + 1
+        End If
+    Next i
+
+    GetSelectedSheetName = ""
+End Function
+
+' ページ範囲UIの有効/無効を切り替え
+' 【修正】chkAll の制御をここに集約（chkAll_Click から強制変更を削除）
+Private Sub UpdatePageRangeUI()
+    Dim selCount As Long
+    selCount = GetSelectedSheetCount()
+
+    If selCount = 0 Then
+        ' 選択なし
+        chkAll.Enabled = False
+        chkAll.Value = True
+        txtFrom.Enabled = False
+        txtTo.Enabled = False
+    ElseIf selCount = 1 Then
+        ' 単一選択時：ページ範囲指定可能
+        chkAll.Enabled = True
+        ' chkAll.Value はユーザーが変更可能なため、現在の値に基づいて txtFrom/txtTo を制御
+        txtFrom.Enabled = (chkAll.Value = False)
+        txtTo.Enabled = (chkAll.Value = False)
+    Else
+        ' 複数選択時：全ページ固定（UI 制御のみで固定）
+        chkAll.Enabled = False  ' 無効化することで変更不可にする
+        ' Value の変更は最小限（既に True の場合は変更しない）
+        If chkAll.Value = False Then
+            chkAll.Value = True
+        End If
+        txtFrom.Enabled = False
+        txtTo.Enabled = False
+    End If
+End Sub
+
+Private Function GetSelectedFormatType() As ExportFormatType
+    ' optExportPdf と optExportExcel はフォーム上に固定配置されている前提
+    ' UserForm_Initialize で存在チェック済み
+    If Me.Controls("optExportExcel").Value Then
+        GetSelectedFormatType = ExportFormatExcelXlsx
+    Else
+        GetSelectedFormatType = ExportFormatPdf
+    End If
+End Function
+
+' コントロール存在チェック関数
+Private Function ControlExists(frm As Object, ctrlName As String) As Boolean
+    Dim tmp As Object
+    On Error Resume Next
+    Set tmp = frm.Controls(ctrlName)
+    ControlExists = (Err.Number = 0 And Not tmp Is Nothing)
+    Err.Clear
+    On Error GoTo 0
+End Function

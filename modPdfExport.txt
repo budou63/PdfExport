@@ -1,0 +1,614 @@
+Option Explicit
+
+'============================================================
+' PDF出力ユーティリティ（ユーザーフォーム起動 & 共通関数）
+'============================================================
+
+'=== 出力形式 ===
+Public Enum ExportFormatType
+    ExportFormatPdf = 1
+    ExportFormatExcelXlsx = 2
+End Enum
+
+'=== 既定の保存先（空ならフォームの入力、空ならブック\PDF） ===
+'   例：固定したければ Environ$("USERPROFILE") & "\Desktop" などに変更
+Private Const DEFAULT_OUT_DIR As String = ""
+
+'---------------------- 公開API ------------------------------
+
+' ユーザーフォームを開く（ボタンに割当可）★モデルレス表示
+Public Sub PDF_エクスポート_フォーム表示()
+    Static f As frmPdfExport
+    On Error Resume Next
+    If f Is Nothing Then Set f = New frmPdfExport
+    ' [FIX] 出力対象ブックを設定（ActiveWorkbook依存を排除）
+    f.SetTargetWorkbook ActiveWorkbook
+    f.Show vbModeless                  ' ← ここがポイント（モデルレス）
+    If Err.Number <> 0 Then            ' 既にUnLoad済み等で参照切れ時の保険
+        Err.Clear
+        Set f = New frmPdfExport
+        f.SetTargetWorkbook ActiveWorkbook
+        f.Show vbModeless
+    End If
+    On Error GoTo 0
+End Sub
+
+
+' 指定シート・ページ範囲でPDF出力（フォームから呼ばれる）
+' outDirUi: フォームのテキストボックスで指定された出力先（空なら既定）
+' fileNameUi: フォームで指定されたファイル名（空なら自動生成）
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub PDF_出力実行(ByVal sheetName As String, _
+                       ByVal fromPage As Variant, _
+                       ByVal toPage As Variant, _
+                       ByVal allPages As Boolean, _
+                       ByVal outDirUi As String, _
+                       ByVal fileNameUi As String, _
+                       Optional ByVal targetWb As Workbook = Nothing)
+
+    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
+    Dim wb As Workbook
+    If targetWb Is Nothing Then
+        Set wb = ActiveWorkbook
+    Else
+        Set wb = targetWb
+    End If
+
+    Dim ws As Worksheet
+    ' [FIX] シート取得にtargetWbを渡す
+    Set ws = シート取得(sheetName, wb)
+    If ws Is Nothing Then
+        MsgBox "シートが見つかりません: " & sheetName, vbExclamation
+        Exit Sub
+    End If
+
+    Dim outDir As String
+    ' [FIX] 解決出力先にtargetWbを渡す
+    outDir = 解決出力先(outDirUi, wb)
+    If Len(outDir) = 0 Then
+        MsgBox "出力先フォルダが指定されていません。", vbExclamation
+        Exit Sub
+    End If
+    フォルダ作成 outDir
+
+    '=== ファイル名決定 ===
+    Dim baseName As String
+    baseName = Trim$(fileNameUi)
+    If Len(baseName) = 0 Then
+        baseName = 置換不可文字除去(ws.Name & "_" & Format(Now, "yyyymmdd_HHMMSS"))
+    Else
+        ' 拡張子を除去し、禁止文字を排除
+        baseName = Replace(baseName, ".pdf", "", , , vbTextCompare)
+        baseName = 置換不可文字除去(baseName)
+    End If
+
+    ' 【修正】同名ファイル上書き回避を追加
+    Dim fn As String
+    fn = ユニークファイル名生成(outDir, baseName, ".pdf")
+
+    ' [FIX] ActiveSheetの退避（targetWb内のシートを優先）
+    Dim savedActiveSheet As Worksheet
+    Dim savedActiveWorkbook As Workbook
+    Set savedActiveSheet = ActiveSheet
+    Set savedActiveWorkbook = ActiveWorkbook
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    On Error GoTo EH
+
+    ' [FIX] targetWb内のシートをアクティブ化
+    wb.Activate
+    ws.Activate
+
+    If allPages Or (IsEmpty(fromPage) And IsEmpty(toPage)) Then
+        ws.ExportAsFixedFormat Type:=xlTypePDF, Filename:=fn, _
+            Quality:=xlQualityStandard, IncludeDocProperties:=True, _
+            IgnorePrintAreas:=False, OpenAfterPublish:=False
+    Else
+        If Not IsNumeric(fromPage) Or Not IsNumeric(toPage) Then
+            MsgBox "ページ番号は数値で指定してください。", vbExclamation
+            GoTo Q
+        End If
+        If CLng(fromPage) <= 0 Or CLng(toPage) < CLng(fromPage) Then
+            MsgBox "ページ範囲の指定が不正です。", vbExclamation
+            GoTo Q
+        End If
+        ws.ExportAsFixedFormat Type:=xlTypePDF, Filename:=fn, _
+            Quality:=xlQualityStandard, IncludeDocProperties:=True, _
+            IgnorePrintAreas:=False, From:=CLng(fromPage), To:=CLng(toPage), _
+            OpenAfterPublish:=False
+    End If
+
+    MsgBox "PDF出力が完了しました。" & vbCrLf & fn, vbInformation
+    GoTo Q
+
+EH:
+    MsgBox "PDF出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
+
+Q:
+    ' [FIX] ActiveSheet/ActiveWorkbookを元に戻す（副作用の最小化）
+    If Not savedActiveWorkbook Is Nothing Then
+        On Error Resume Next
+        savedActiveWorkbook.Activate
+        If Not savedActiveSheet Is Nothing Then
+            savedActiveSheet.Activate
+        End If
+        On Error GoTo 0
+    End If
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub
+
+'
+' 土地調書転記 → 指定形式で出力（フォームから呼ばれる）
+'   1) 既存の転記マクロを実行
+'   2) PDF または Excel で保存
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub 土地調書_出力実行(ByVal sheetName As String, _
+                         ByVal fromPage As Variant, _
+                         ByVal toPage As Variant, _
+                         ByVal allPages As Boolean, _
+                         ByVal outDirUi As String, _
+                         ByVal fileNameUi As String, _
+                         ByVal formatType As ExportFormatType, _
+                         Optional ByVal targetWb As Workbook = Nothing)
+
+    Dim transferNames As Variant
+    Dim i As Long
+    Dim executed As Boolean
+
+    ' 転記マクロ候補（必要ならここに追加する）
+    transferNames = Array( _
+        "用地一括転記_ワンクリック", _
+        "用地一括転記ワンクリック", _
+        "用地一括転記_ワンクリ")
+
+    '--- ① 表シート→土地調書へ転記（候補を順に試す） ---
+    On Error Resume Next
+    For i = LBound(transferNames) To UBound(transferNames)
+        Err.Clear
+        Application.Run CStr(transferNames(i))
+        If Err.Number = 0 Then
+            executed = True
+            Exit For
+        End If
+    Next i
+    On Error GoTo EH
+
+    If Not executed Then
+        MsgBox "転記マクロが見つかりません。" & vbCrLf & _
+               "候補名を確認してください: 用地一括転記_ワンクリック / 用地一括転記ワンクリック / 用地一括転記_ワンクリ", _
+               vbExclamation
+        Exit Sub
+    End If
+
+    '--- ② 出力形式に応じて保存 ---
+    ' [FIX] targetWbを渡す
+    Select Case formatType
+        Case ExportFormatPdf
+            Call PDF_出力実行(sheetName, fromPage, toPage, allPages, outDirUi, fileNameUi, targetWb)
+        Case ExportFormatExcelXlsx
+            Call Excel_出力実行(sheetName, outDirUi, fileNameUi, targetWb)
+        Case Else
+            Err.Raise vbObjectError + 310, , "未対応の出力形式が指定されました。"
+    End Select
+
+    Exit Sub
+EH:
+    MsgBox "出力中にエラー: " & Err.Description, vbExclamation
+End Sub
+
+' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub Excel_複数シート出力実行(ByVal sheetNames() As String, _
+                                   ByVal outDirUi As String, _
+                                   ByVal fileNameUi As String, _
+                                   Optional ByVal targetWb As Workbook = Nothing)
+
+    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
+    Dim wb As Workbook
+    If targetWb Is Nothing Then
+        Set wb = ActiveWorkbook
+    Else
+        Set wb = targetWb
+    End If
+
+    Dim i As Long
+    Dim ws As Worksheet
+    Dim wbNew As Workbook
+    Dim wsNew As Worksheet
+    Dim valueRange As Range
+    Dim outDir As String
+    Dim baseName As String
+    Dim fn As String
+
+    ' [FIX] シート名の検証（targetWbを渡す）
+    For i = LBound(sheetNames) To UBound(sheetNames)
+        Set ws = シート取得(sheetNames(i), wb)
+        If ws Is Nothing Then
+            Err.Raise vbObjectError + 1001, , "シートが見つかりません: " & sheetNames(i)
+        End If
+    Next i
+
+    ' [FIX] 出力先の解決（targetWbを渡す）
+    outDir = 解決出力先(outDirUi, wb)
+    If Len(outDir) = 0 Then
+        Err.Raise vbObjectError + 1002, , "出力先フォルダが指定されていません。"
+    End If
+    フォルダ作成 outDir
+
+    ' ファイル名決定
+    baseName = Trim$(fileNameUi)
+    If Len(baseName) = 0 Then
+        baseName = 置換不可文字除去("Export_" & Format(Now, "yyyymmdd_HHMMSS"))
+    Else
+        baseName = 置換不可文字除去(RemoveExtension(baseName))
+    End If
+
+    ' 同名ファイルが存在する場合は末尾に _001, _002... を付けて上書き回避
+    fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    On Error GoTo EH
+
+    ' [FIX] 最初のシートをコピーして新規ブックを生成（targetWbから）
+    Set ws = シート取得(sheetNames(LBound(sheetNames)), wb)
+    If ws Is Nothing Then
+        Err.Raise vbObjectError + 1004, , "最初のシートが見つかりません: " & sheetNames(LBound(sheetNames))
+    End If
+    
+    ws.Copy
+    Set wbNew = ActiveWorkbook
+    Set wsNew = wbNew.Worksheets(1)
+    
+    ' 最初のシートの値貼り付け処理
+    Set valueRange = GetValueConversionRange(wsNew)
+    If Not valueRange Is Nothing Then
+        valueRange.Value = valueRange.Value
+    End If
+
+    ' 2枚目以降のシートをコピーして新規ブックに追加（targetWbから）
+    For i = LBound(sheetNames) + 1 To UBound(sheetNames)
+        Set ws = シート取得(sheetNames(i), wb)
+        If Not ws Is Nothing Then
+            ws.Copy After:=wbNew.Worksheets(wbNew.Worksheets.Count)
+            Set wsNew = wbNew.Worksheets(wbNew.Worksheets.Count)
+            
+            ' 値貼り付け処理（関数を潰す）
+            Set valueRange = GetValueConversionRange(wsNew)
+            If Not valueRange Is Nothing Then
+                valueRange.Value = valueRange.Value
+            End If
+        End If
+    Next i
+
+    ' 保存
+    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
+    wbNew.Close SaveChanges:=False
+
+    MsgBox "Excel出力が完了しました。" & vbCrLf & _
+           "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
+           fn, vbInformation
+    GoTo Q
+
+EH:
+    Dim errNum As Long
+    Dim errDesc As String
+    errNum = Err.Number
+    errDesc = Err.Description
+    
+    ' クリーンアップ
+    If Not wbNew Is Nothing Then
+        On Error Resume Next
+        wbNew.Close SaveChanges:=False
+        On Error GoTo 0
+    End If
+    
+    ' エラーを呼び出し側に伝播
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    Err.Raise errNum, , errDesc
+
+Q:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub
+
+' 指定シートを Excel 形式（値貼り付け）で保存
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub Excel_出力実行(ByVal sheetName As String, _
+                       ByVal outDirUi As String, _
+                       ByVal fileNameUi As String, _
+                       Optional ByVal targetWb As Workbook = Nothing)
+
+    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
+    Dim wb As Workbook
+    If targetWb Is Nothing Then
+        Set wb = ActiveWorkbook
+    Else
+        Set wb = targetWb
+    End If
+
+    Dim ws As Worksheet
+    ' [FIX] シート取得にtargetWbを渡す
+    Set ws = シート取得(sheetName, wb)
+    If ws Is Nothing Then
+        MsgBox "シートが見つかりません: " & sheetName, vbExclamation
+        Exit Sub
+    End If
+
+    Dim outDir As String
+    ' [FIX] 解決出力先にtargetWbを渡す
+    outDir = 解決出力先(outDirUi, wb)
+    If Len(outDir) = 0 Then
+        MsgBox "出力先フォルダが指定されていません。", vbExclamation
+        Exit Sub
+    End If
+    フォルダ作成 outDir
+
+    '=== ファイル名決定 ===
+    Dim baseName As String
+    baseName = Trim$(fileNameUi)
+    If Len(baseName) = 0 Then
+        baseName = 置換不可文字除去(ws.Name & "_" & Format(Now, "yyyymmdd_HHMMSS"))
+    Else
+        baseName = 置換不可文字除去(RemoveExtension(baseName))
+    End If
+
+    Dim fn As String
+    fn = outDir & "\" & baseName & ".xlsx"
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    Dim wbNew As Workbook
+    Dim wsNew As Worksheet
+    Dim valueRange As Range
+
+    On Error GoTo EH
+
+    ' [FIX] targetWb内のシートをコピー
+    ws.Copy
+    Set wbNew = ActiveWorkbook
+    Set wsNew = wbNew.Worksheets(1)
+
+    Set valueRange = GetValueConversionRange(wsNew)
+    If Not valueRange Is Nothing Then
+        valueRange.Value = valueRange.Value
+    End If
+
+    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
+    wbNew.Close SaveChanges:=False
+
+    MsgBox "Excel出力が完了しました。" & vbCrLf & fn, vbInformation
+    GoTo Q
+
+EH:
+    If Not wbNew Is Nothing Then
+        On Error Resume Next
+        wbNew.Close SaveChanges:=False
+        On Error GoTo 0
+    End If
+    MsgBox "Excel出力でエラー: " & Err.Description, vbCritical
+
+Q:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub
+
+
+'---------------------- 補助関数 ----------------------------
+
+' シート取得（Name/CodeNameどちらでも可）
+' targetWb: 対象ブック（Nothingの場合はActiveWorkbookを使用）
+Private Function シート取得(ByVal nameOrCodeName As String, Optional ByVal targetWb As Workbook = Nothing) As Worksheet
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    
+    ' 対象ブックの確定
+    If targetWb Is Nothing Then
+        Set wb = ActiveWorkbook
+    Else
+        Set wb = targetWb
+    End If
+    
+    ' シート検索
+    For Each ws In wb.Worksheets
+        If StrComp(ws.Name, nameOrCodeName, vbTextCompare) = 0 Or _
+           StrComp(ws.CodeName, nameOrCodeName, vbTextCompare) = 0 Then
+            Set シート取得 = ws
+            Exit Function
+        End If
+    Next
+    Set シート取得 = Nothing
+End Function
+
+' 推定ページ数（印刷範囲・倍率・改ページ設定に依存）
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Function 推定ページ数(ByVal sheetName As String, Optional ByVal targetWb As Workbook = Nothing) As Long
+    ' [FIX] シート取得にtargetWbを渡す
+    Dim ws As Worksheet
+    Set ws = シート取得(sheetName, targetWb)
+    If ws Is Nothing Then Exit Function
+
+    Dim h As Long, v As Long
+    Dim savedActiveSheet As Worksheet
+    Dim savedActiveWorkbook As Workbook
+    Set savedActiveSheet = ActiveSheet
+    Set savedActiveWorkbook = ActiveWorkbook
+
+    On Error Resume Next
+    ws.Activate
+    h = ws.HPageBreaks.Count + 1
+    v = ws.VPageBreaks.Count + 1
+    推定ページ数 = h * v
+    On Error GoTo 0
+
+    ' [FIX] ActiveSheet/ActiveWorkbookを元に戻す（副作用の最小化）
+    If Not savedActiveWorkbook Is Nothing Then
+        On Error Resume Next
+        savedActiveWorkbook.Activate
+        If Not savedActiveSheet Is Nothing Then
+            savedActiveSheet.Activate
+        End If
+        On Error GoTo 0
+    End If
+End Function
+
+' 出力先の解決（フォーム値 > 定数 > 既定：ブック\PDF）
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [FIX] アドイン化対応：targetWbがNothingの場合はActiveWorkbookを使用（フォールバック）
+Private Function 解決出力先(ByVal uiPath As String, Optional ByVal targetWb As Workbook = Nothing) As String
+    Dim p As String
+    p = Trim$(uiPath)
+    If Len(p) > 0 Then
+        解決出力先 = p
+        Exit Function
+    End If
+
+    If Len(DEFAULT_OUT_DIR) > 0 Then
+        解決出力先 = DEFAULT_OUT_DIR
+    Else
+        ' [FIX] targetWbのパスを使用（アドイン自身ではなく、出力対象のブック）
+        Dim wb As Workbook
+        If targetWb Is Nothing Then
+            ' フォールバック：ActiveWorkbookを使用（targetWbが渡されていない場合）
+            Set wb = ActiveWorkbook
+        Else
+            Set wb = targetWb
+        End If
+        
+        ' [FIX] ブックが無効な場合やパスが取得できない場合はデスクトップを使用
+        If Not wb Is Nothing And Len(wb.path) > 0 Then
+            解決出力先 = wb.path & "\PDF"
+        Else
+            ' パスが取得できない場合はデスクトップ（保存されていないブックの場合）
+            解決出力先 = Environ$("USERPROFILE") & "\Desktop"
+        End If
+    End If
+End Function
+
+' フォルダ作成（なければ作る、多階層パス対応）
+Private Sub フォルダ作成(ByVal path As String)
+    If Len(path) = 0 Then Exit Sub
+    
+    ' 【修正】既に存在する場合は何もしない
+    If Dir(path, vbDirectory) <> "" Then Exit Sub
+    
+    ' 【修正】多階層パスに対応：親フォルダから順に作成
+    Dim parts() As String
+    Dim i As Long
+    Dim currentPath As String
+    Dim pathSep As String
+    
+    ' パス区切り文字を統一（Windows環境を想定）
+    pathSep = "\"
+    path = Replace(path, "/", pathSep)
+    
+    ' ドライブレターがある場合は最初の区切りまでを初期パスにする
+    If Mid(path, 2, 1) = ":" Then
+        currentPath = Left(path, 2) & pathSep
+        parts = Split(Mid(path, 4), pathSep)
+    Else
+        currentPath = ""
+        parts = Split(path, pathSep)
+    End If
+    
+    ' 各階層を順に作成
+    For i = LBound(parts) To UBound(parts)
+        If Len(parts(i)) > 0 Then
+            currentPath = currentPath & parts(i) & pathSep
+            ' 存在しない場合のみ作成
+            If Dir(currentPath, vbDirectory) = "" Then
+                On Error Resume Next
+                MkDir currentPath
+                ' 作成失敗時はエラーを無視せず、上位に伝播させる
+                If Err.Number <> 0 Then
+                    On Error GoTo 0
+                    Err.Raise vbObjectError + 1005, , "フォルダ作成に失敗しました: " & currentPath & vbCrLf & Err.Description
+                End If
+                On Error GoTo 0
+            End If
+        End If
+    Next i
+End Sub
+
+' ファイル名作成
+Private Function 作成ファイル名(ByVal wb As Workbook, Optional ByVal suffix As String = "") As String
+    Dim base As String
+    base = 置換不可文字除去(Left$(wb.Name, InStrRev(wb.Name, ".") - 1))
+    作成ファイル名 = base & "_" & Format(Now, "yyyymmdd_HHMMSS") & suffix & ".pdf"
+End Function
+
+' ファイル名に使えない文字の排除
+Private Function 置換不可文字除去(ByVal s As String) As String
+    Dim ng As Variant: ng = Array("\", "/", ":", "*", "?", """", "<", ">", "|")
+    Dim i As Long
+    For i = LBound(ng) To UBound(ng)
+        s = Replace$(s, CStr(ng(i)), "_")
+    Next
+    置換不可文字除去 = s
+End Function
+
+' 拡張子を除去（.が無い場合はそのまま）
+Private Function RemoveExtension(ByVal fileName As String) As String
+    Dim p As Long
+    p = InStrRev(fileName, ".")
+    If p > 0 Then
+        RemoveExtension = Left$(fileName, p - 1)
+    Else
+        RemoveExtension = fileName
+    End If
+End Function
+
+' 値貼り付け対象の範囲を取得（印刷範囲があれば優先、なければUsedRange）
+Private Function GetValueConversionRange(ByVal ws As Worksheet) As Range
+    Dim printArea As String
+    printArea = ws.PageSetup.PrintArea
+
+    If Len(printArea) > 0 Then
+        On Error Resume Next
+        Set GetValueConversionRange = ws.Range(printArea)
+        On Error GoTo 0
+        Exit Function
+    End If
+
+    If Not ws.UsedRange Is Nothing Then
+        Set GetValueConversionRange = ws.UsedRange
+    End If
+End Function
+
+' ユニークなファイル名を生成（同名ファイルが存在する場合は _001, _002... を付与）
+Private Function ユニークファイル名生成(ByVal outDir As String, ByVal baseName As String, ByVal extension As String) As String
+    Dim fn As String
+    Dim counter As Long
+    Dim testPath As String
+    
+    ' まず基本ファイル名で試す
+    fn = baseName & extension
+    testPath = outDir & "\" & fn
+    
+    ' ファイルが存在しない場合はそのまま返す
+    If Dir(testPath, vbNormal) = "" Then
+        ユニークファイル名生成 = testPath
+        Exit Function
+    End If
+    
+    ' 同名ファイルが存在する場合は _001, _002... を付与
+    counter = 1
+    Do
+        fn = baseName & "_" & Format(counter, "000") & extension
+        testPath = outDir & "\" & fn
+        If Dir(testPath, vbNormal) = "" Then
+            ユニークファイル名生成 = testPath
+            Exit Function
+        End If
+        counter = counter + 1
+        ' 無限ループ防止（999まで）
+        If counter > 999 Then
+            Err.Raise vbObjectError + 1003, , "ファイル名の生成に失敗しました（同名ファイルが多すぎます）。"
+        End If
+    Loop
+End Function

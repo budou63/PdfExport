@@ -184,7 +184,7 @@ Public Sub 土地調書_出力実行(ByVal sheetName As String, _
             Exit For
         End If
     Next i
-    On Error GoTo EH
+    On Error GoTo 0
 
     If Not executed Then
         MsgBox "転記マクロが見つかりません。" & vbCrLf & _
@@ -195,6 +195,7 @@ Public Sub 土地調書_出力実行(ByVal sheetName As String, _
 
     '--- ② 出力形式に応じて保存 ---
     ' [FIX] targetWbを渡す
+    On Error GoTo EH
     Select Case formatType
         Case ExportFormatPdf
             Call PDF_出力実行(sheetName, fromPage, toPage, allPages, outDirUi, fileNameUi, targetWb)
@@ -211,10 +212,11 @@ End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
 ' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-Public Sub Excel_複数シート出力実行(ByVal sheetNames() As String, _
-                                   ByVal outDirUi As String, _
-                                   ByVal fileNameUi As String, _
-                                   Optional ByVal targetWb As Workbook = Nothing)
+Public Sub Excel_複数シート出力実行( _
+    ByVal sheetNames() As String, _
+    ByVal outDirUi As String, _
+    ByVal fileNameUi As String, _
+    Optional ByVal targetWb As Workbook = Nothing)
 
     ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
     Dim wb As Workbook

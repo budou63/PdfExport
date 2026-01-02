@@ -1,0 +1,67 @@
+'============================================================
+' 他ブックからアドインのマクロを呼び出すサンプル
+'============================================================
+
+' 【方法1】Application.Run を使用（推奨）
+' アドイン名は実ファイル名に合わせる（例：PdfExport.xlam）
+Sub サンプル1_ApplicationRunで呼び出し()
+    On Error GoTo EH
+    
+    ' アドイン名は実ファイル名（拡張子含む）に合わせる
+    ' 例：アドインファイルが「PdfExport.xlam」の場合
+    Application.Run "'PdfExport.xlam'!PDF_エクスポート_フォーム表示"
+    
+    Exit Sub
+EH:
+    MsgBox "アドインの呼び出しに失敗しました。" & vbCrLf & _
+           "エラー番号: " & Err.Number & vbCrLf & _
+           "エラー内容: " & Err.Description & vbCrLf & vbCrLf & _
+           "アドインが読み込まれているか確認してください。", vbCritical
+End Sub
+
+' 【方法2】Application.Run を使用（アドイン名を変数で指定）
+Sub サンプル2_ApplicationRunで呼び出し_変数使用()
+    Dim addinName As String
+    
+    On Error GoTo EH
+    
+    ' アドイン名を変数で指定（実ファイル名に合わせる）
+    addinName = "PdfExport.xlam"  ' ← 実際のアドインファイル名に変更
+    
+    Application.Run "'" & addinName & "'!PDF_エクスポート_フォーム表示"
+    
+    Exit Sub
+EH:
+    MsgBox "アドインの呼び出しに失敗しました。" & vbCrLf & _
+           "エラー番号: " & Err.Number & vbCrLf & _
+           "エラー内容: " & Err.Description & vbCrLf & vbCrLf & _
+           "アドイン名を確認してください: " & addinName, vbCritical
+End Sub
+
+' 【方法3】ボタンに割り当てる場合
+' ボタンのマクロに「サンプル1_ApplicationRunで呼び出し」を指定する
+
+' 【方法4】リボンに追加する場合
+' カスタムリボンXMLで、onAction属性に以下を指定：
+' onAction="'PdfExport.xlam'!PDF_エクスポート_フォーム表示"
+
+'============================================================
+' 注意事項
+'============================================================
+' 1. アドイン名は実ファイル名（拡張子含む）に合わせる
+'    例：ファイル名が「PdfExport.xlam」の場合
+'        Application.Run "'PdfExport.xlam'!PDF_エクスポート_フォーム表示"
+'
+' 2. アドインが読み込まれている必要がある
+'    - ファイル > オプション > アドイン > 管理: Excelアドイン > 設定
+'    - または、ファイルを開いて有効化
+'
+' 3. マクロ一覧に表示されなくても、Application.Runで呼び出せる
+'    - アドインのマクロは通常、マクロ一覧に表示されない
+'    - Application.Runを使用すれば確実に呼び出せる
+'
+' 4. エラーハンドリングを必ず実装する
+'    - アドインが読み込まれていない場合のエラー処理
+'    - マクロ名が間違っている場合のエラー処理
+
+

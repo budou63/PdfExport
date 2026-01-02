@@ -17,17 +17,28 @@ Private Const DEFAULT_OUT_DIR As String = ""
 '---------------------- 公開API ------------------------------
 
 ' ユーザーフォームを開く（ボタンに割当可）★モデルレス表示
+' [FIX] 他ブックから呼ばれても、対象ブックがアドイン自身にならないように修正
 Public Sub PDF_エクスポート_フォーム表示()
-    Static f As frmPdfExport
+    Dim targetWb As Workbook
+    Dim f As frmPdfExport
+    
+    ' [FIX] 安全にtargetWbを決定（ActiveWorkbookがThisWorkbookなら別ブックを選ぶ）
+    Set targetWb = GetTargetWorkbook()
+    If targetWb Is Nothing Then
+        MsgBox "出力対象となるブックが見つかりません。" & vbCrLf & _
+               "Excelブックを開いてから実行してください。", vbExclamation
+        Exit Sub
+    End If
+    
     On Error Resume Next
-    If f Is Nothing Then Set f = New frmPdfExport
-    ' [FIX] 出力対象ブックを設定（ActiveWorkbook依存を排除）
-    f.SetTargetWorkbook ActiveWorkbook
+    Set f = New frmPdfExport
+    ' [FIX] 安全に決定したtargetWbを設定
+    f.SetTargetWorkbook targetWb
     f.Show vbModeless                  ' ← ここがポイント（モデルレス）
     If Err.Number <> 0 Then            ' 既にUnLoad済み等で参照切れ時の保険
         Err.Clear
         Set f = New frmPdfExport
-        f.SetTargetWorkbook ActiveWorkbook
+        f.SetTargetWorkbook targetWb
         f.Show vbModeless
     End If
     On Error GoTo 0
@@ -400,6 +411,42 @@ End Sub
 
 
 '---------------------- 補助関数 ----------------------------
+
+' 出力対象ブックを安全に決定する関数
+' ActiveWorkbookがThisWorkbook（アドイン自身）の場合は、別のブックを選択
+' 戻り値: 出力対象となるブック（見つからない場合はNothing）
+Private Function GetTargetWorkbook() As Workbook
+    Dim wb As Workbook
+    Dim addinWb As Workbook
+    
+    ' アドイン自身（ThisWorkbook）を取得
+    Set addinWb = ThisWorkbook
+    
+    ' ActiveWorkbookがアドイン自身でない場合は、ActiveWorkbookを返す
+    On Error Resume Next
+    Set wb = ActiveWorkbook
+    On Error GoTo 0
+    
+    If Not wb Is Nothing Then
+        ' ActiveWorkbookがアドイン自身でない場合
+        If Not wb Is addinWb Then
+            Set GetTargetWorkbook = wb
+            Exit Function
+        End If
+    End If
+    
+    ' ActiveWorkbookがアドイン自身、または取得できない場合は、
+    ' Workbooksコレクションからアドイン以外の最初のブックを探す
+    For Each wb In Workbooks
+        If Not wb Is addinWb Then
+            Set GetTargetWorkbook = wb
+            Exit Function
+        End If
+    Next wb
+    
+    ' 見つからない場合はNothingを返す
+    Set GetTargetWorkbook = Nothing
+End Function
 
 ' シート取得（Name/CodeNameどちらでも可）
 ' targetWb: 対象ブック（Nothingの場合はActiveWorkbookを使用）

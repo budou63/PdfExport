@@ -1,0 +1,30 @@
+Option Explicit
+
+'============================================================
+' PdfExport.xlam - ThisWorkbook イベントハンドラ
+' アドインの読み込み時・終了時にショートカットキーを設定/解除
+'============================================================
+
+'----------------------------------------
+' アドイン読み込み時（Workbook_Open）
+'----------------------------------------
+
+Private Sub Workbook_Open()
+    ' ショートカットキーの設定
+    ' Ctrl+Shift+P でPDF/Excel出力フォームを起動
+    On Error Resume Next
+    Application.OnKey "^+P", "'PdfExport.xlam'!PdfExport_起動"
+    On Error GoTo 0
+End Sub
+
+'----------------------------------------
+' アドイン終了時（Workbook_BeforeClose）
+'----------------------------------------
+
+Private Sub Workbook_BeforeClose(Cancel As Boolean)
+    ' ショートカットキーの解除（必須：他アドインとの競合を防ぐ）
+    On Error Resume Next
+    Application.OnKey "^+P"  ' 引数なしで解除
+    On Error GoTo 0
+End Sub
+

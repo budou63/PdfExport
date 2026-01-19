@@ -38,7 +38,7 @@ Private Sub UserForm_Initialize()
         .StartUpPosition = 1          ' 1 = CenterOwner（中央表示）
         .Zoom = 100                   ' ズーム倍率を固定（これが変動の原因になる）
         .Width = 600                  ' 横幅
-        .Height = 350                 ' 高さ
+        .Height = 400                 ' 高さ
     End With
 
     ' === 必須コントロールの存在チェック ===
@@ -236,7 +236,7 @@ Private Sub cmdExport_Click()
         Dim baseFileNameMulti As String
         baseFileNameMulti = Trim$(txtFileName.Text)
         On Error Resume Next
-        Call modPdfExport.Excel_複数シート出力実行(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
+        Call Excel_複数シート出力実行(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
         If Err.Number <> 0 Then
             MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
         End If

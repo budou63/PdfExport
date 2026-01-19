@@ -299,7 +299,7 @@ Public Sub Excel_複数シート出力実行( _
 
     ' 保存
     wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
-    wbNew.Close SaveChanges:=False
+    wbNew.Close SaveChanges:=True
 
     MsgBox "Excel出力が完了しました。" & vbCrLf & _
            "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _

@@ -53,51 +53,7 @@ Public Sub PdfExport_テスト()
 End Sub
 
 '----------------------------------------
-' フォームからの呼び出し用ラッパー（英数字のみ、モジュール修飾不要）
+' フォームからの呼び出し用APIは modApi モジュールに移動しました
+' （名前衝突を避けるため、modApi に統一）
 '----------------------------------------
-
-' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
-' 【修正】フォームからの呼び出し用ラッパー（モジュール修飾不要で確実に呼べる）
-' sheetNames: シート名の配列
-' outDirUi: 出力先フォルダ（UIで指定された値）
-' fileNameUi: ファイル名（UIで指定された値、空なら自動生成）
-' targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-Public Sub PdfExport_ExcelMultiExport(ByVal sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
-    ' modPdfExportの実処理を呼ぶ（モジュール修飾なしで直接呼べる）
-    Call modPdfExport.Excel_MultiSheetExport(sheetNames, outDirUi, fileNameUi, targetWb)
-End Sub
-
-' 指定シート・ページ範囲でPDF出力
-' 【修正】フォームからの呼び出し用ラッパー（モジュール修飾不要で確実に呼べる）
-' sheetName: シート名
-' fromPage: 開始ページ（Variant、全ページの場合はEmpty）
-' toPage: 終了ページ（Variant、全ページの場合はEmpty）
-' allPages: 全ページ出力フラグ
-' outDirUi: 出力先フォルダ（UIで指定された値）
-' fileNameUi: ファイル名（UIで指定された値、空なら自動生成）
-' targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-Public Sub PdfExport_PdfExport(ByVal sheetName As String, _
-                                ByVal fromPage As Variant, _
-                                ByVal toPage As Variant, _
-                                ByVal allPages As Boolean, _
-                                ByVal outDirUi As String, _
-                                ByVal fileNameUi As String, _
-                                Optional ByVal targetWb As Workbook = Nothing)
-    ' modPdfExportの実処理を呼ぶ（モジュール修飾なしで直接呼べる）
-    Call modPdfExport.PDF_出力実行(sheetName, fromPage, toPage, allPages, outDirUi, fileNameUi, targetWb)
-End Sub
-
-' 指定シートをExcel形式（値貼り付け）で保存
-' 【修正】フォームからの呼び出し用ラッパー（モジュール修飾不要で確実に呼べる）
-' sheetName: シート名
-' outDirUi: 出力先フォルダ（UIで指定された値）
-' fileNameUi: ファイル名（UIで指定された値、空なら自動生成）
-' targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-Public Sub PdfExport_ExcelExport(ByVal sheetName As String, _
-                                  ByVal outDirUi As String, _
-                                  ByVal fileNameUi As String, _
-                                  Optional ByVal targetWb As Workbook = Nothing)
-    ' modPdfExportの実処理を呼ぶ（モジュール修飾なしで直接呼べる）
-    Call modPdfExport.Excel_出力実行(sheetName, outDirUi, fileNameUi, targetWb)
-End Sub
 

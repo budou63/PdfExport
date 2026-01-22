@@ -212,7 +212,8 @@ End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
 ' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-Public Sub Excel_複数シート出力実行(ByVal sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
+' 【修正】英数字のみの安定したエントリポイント（日本語名の揺れ/全角混入があっても呼び出しが壊れない）
+Public Sub Excel_MultiSheetExport(ByVal sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
     ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
     Dim wb As Workbook
@@ -323,6 +324,14 @@ EH:
 Q:
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
+End Sub
+
+' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
+' 【修正】日本語名のラッパー（後方互換性のため保持）
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub Excel_複数シート出力実行(ByVal sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
+    ' 英数字名のエントリポイントに委譲
+    Call Excel_MultiSheetExport(sheetNames, outDirUi, fileNameUi, targetWb)
 End Sub
 
 ' 指定シートを Excel 形式（値貼り付け）で保存

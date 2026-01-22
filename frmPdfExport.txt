@@ -232,11 +232,12 @@ Private Sub cmdExport_Click()
 
     ' 【修正】Excel出力かつ複数選択時は1つのファイルにまとめて保存
     ' [FIX] mTargetWbを渡す
+    ' 【修正】英数字のみの安定したエントリポイントを使用（日本語名の揺れ/全角混入があっても呼び出しが壊れない）
     If fmt = ExportFormatExcelXlsx And selCount > 1 Then
         Dim baseFileNameMulti As String
         baseFileNameMulti = Trim$(txtFileName.Text)
         On Error Resume Next
-        Call Excel_複数シート出力実行(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
+        Call modPdfExport.Excel_MultiSheetExport(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
         If Err.Number <> 0 Then
             MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
         End If

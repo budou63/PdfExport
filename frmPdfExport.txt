@@ -232,12 +232,12 @@ Private Sub cmdExport_Click()
 
     ' 【修正】Excel出力かつ複数選択時は1つのファイルにまとめて保存
     ' [FIX] mTargetWbを渡す
-    ' 【修正】modEntryの英数字ラッパーを直接呼ぶ（モジュール修飾不要、確実に呼べる）
+    ' 【修正】modEntryの英数字ラッパーを呼ぶ（VBAではUserFormから標準モジュールを呼ぶ際は明示的なモジュール名が必要）
     If fmt = ExportFormatExcelXlsx And selCount > 1 Then
         Dim baseFileNameMulti As String
         baseFileNameMulti = Trim$(txtFileName.Text)
         On Error Resume Next
-        Call PdfExport_ExcelMultiExport(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
+        Call modEntry.PdfExport_ExcelMultiExport(selectedSheets, outDir, baseFileNameMulti, mTargetWb)
         If Err.Number <> 0 Then
             MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
         End If
@@ -292,12 +292,12 @@ Private Sub cmdExport_Click()
 
         On Error Resume Next
         If fmt = ExportFormatPdf Then
-            ' 【修正】modEntryの英数字ラッパーを直接呼ぶ（モジュール修飾不要、確実に呼べる）
-            Call PdfExport_PdfExport(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
+            ' 【修正】modEntryの英数字ラッパーを呼ぶ（VBAではUserFormから標準モジュールを呼ぶ際は明示的なモジュール名が必要）
+            Call modEntry.PdfExport_PdfExport(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
         Else
             ' Excel単一選択時
-            ' 【修正】modEntryの英数字ラッパーを直接呼ぶ（モジュール修飾不要、確実に呼べる）
-            Call PdfExport_ExcelExport(sh, outDir, fileNameForSheet, mTargetWb)
+            ' 【修正】modEntryの英数字ラッパーを呼ぶ（VBAではUserFormから標準モジュールを呼ぶ際は明示的なモジュール名が必要）
+            Call modEntry.PdfExport_ExcelExport(sh, outDir, fileNameForSheet, mTargetWb)
         End If
 
         If Err.Number <> 0 Then

@@ -292,10 +292,12 @@ Private Sub cmdExport_Click()
 
         On Error Resume Next
         If fmt = ExportFormatPdf Then
-            Call modPdfExport.PDF_出力実行(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
+            ' 【修正】modEntryの英数字ラッパーを直接呼ぶ（モジュール修飾不要、確実に呼べる）
+            Call PdfExport_PdfExport(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
         Else
             ' Excel単一選択時
-            Call modPdfExport.Excel_出力実行(sh, outDir, fileNameForSheet, mTargetWb)
+            ' 【修正】modEntryの英数字ラッパーを直接呼ぶ（モジュール修飾不要、確実に呼べる）
+            Call PdfExport_ExcelExport(sh, outDir, fileNameForSheet, mTargetWb)
         End If
 
         If Err.Number <> 0 Then

@@ -15,7 +15,7 @@ Option Explicit
 ' outDirUi: 出力先フォルダ（UIで指定された値）
 ' fileNameUi: ファイル名（UIで指定された値、空なら自動生成）
 ' targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-Public Sub PdfExport_ExcelMultiExport(ByVal sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
+Public Sub PdfExport_ExcelMultiExport(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
     ' modPdfExportの日本語実処理を呼ぶ
     Call modPdfExport.Excel_複数シート出力実行(sheetNames, outDirUi, fileNameUi, targetWb)
 End Sub

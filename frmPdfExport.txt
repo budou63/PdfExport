@@ -191,7 +191,7 @@ Private Sub cmdExport_Click()
         Exit Sub
     End If
 
-    Dim fmt As modPdfExport.ExportFormatType
+    Dim fmt As ExportFormatType
     fmt = GetSelectedFormatType()
 
     ' ページ範囲の取得（単一選択時のみ有効）
@@ -240,7 +240,7 @@ Private Sub cmdExport_Click()
     ' 【修正】Excel出力かつ複数選択時は1つのファイルにまとめて保存
     ' [FIX] mTargetWbを渡す
     ' 【修正】modApiの英数字APIを直接呼ぶ（モジュール修飾不要、確実に呼べる）
-    If fmt = modPdfExport.ExportFormatExcelXlsx And selCount > 1 Then
+    If fmt = ExportFormatExcelXlsx And selCount > 1 Then
         Dim baseFileNameMulti As String
         baseFileNameMulti = Trim$(txtFileName.Text)
         On Error Resume Next
@@ -257,7 +257,7 @@ Private Sub cmdExport_Click()
     ' 【修正】Excel（関数保持）出力かつ複数選択時は1つのファイルにまとめて保存（数式保持）
     ' [FIX] mTargetWbを渡す
     ' 【修正】modApiの英数字APIを直接呼ぶ（モジュール修飾不要、確実に呼べる）
-    If fmt = modPdfExport.ExportFormatExcelXlsxFormula And selCount > 1 Then
+    If fmt = ExportFormatExcelXlsxFormula And selCount > 1 Then
         Dim baseFileNameMultiFormula As String
         baseFileNameMultiFormula = Trim$(txtFileName.Text)
         On Error Resume Next
@@ -315,18 +315,23 @@ Private Sub cmdExport_Click()
         errDesc = ""
 
         On Error Resume Next
-        If fmt = modPdfExport.ExportFormatPdf Then
-            ' 【修正】modApiの英数字APIを直接呼ぶ（明示的にモジュール修飾）
-            Call modApi.PdfExport_PdfExport(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
-        ElseIf fmt = modPdfExport.ExportFormatExcelXlsx Then
-            ' Excel単一選択時（値貼り付け）
-            ' 【修正】modApiの英数字APIを直接呼ぶ（明示的にモジュール修飾）
-            Call modApi.PdfExport_ExcelExport(sh, outDir, fileNameForSheet, mTargetWb)
-        ElseIf fmt = modPdfExport.ExportFormatExcelXlsxFormula Then
-            ' Excel単一選択時（関数保持）
-            ' 【修正】modApiの英数字APIを直接呼ぶ（明示的にモジュール修飾）
-            Call modApi.PdfExport_ExcelExportFormula(sh, outDir, fileNameForSheet, mTargetWb)
-        End If
+        ' 【防御策】Select Caseで明示的にすべてのEnum値を処理し、Case Elseで未対応値を検出
+        Select Case fmt
+            Case ExportFormatPdf
+                ' 【修正】modApiの英数字APIを直接呼ぶ（明示的にモジュール修飾）
+                Call modApi.PdfExport_PdfExport(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
+            Case ExportFormatExcelXlsx
+                ' Excel単一選択時（値貼り付け）
+                ' 【修正】modApiの英数字APIを直接呼ぶ（明示的にモジュール修飾）
+                Call modApi.PdfExport_ExcelExport(sh, outDir, fileNameForSheet, mTargetWb)
+            Case ExportFormatExcelXlsxFormula
+                ' Excel単一選択時（関数保持）
+                ' 【修正】modApiの英数字APIを直接呼ぶ（明示的にモジュール修飾）
+                Call modApi.PdfExport_ExcelExportFormula(sh, outDir, fileNameForSheet, mTargetWb)
+            Case Else
+                ' 【防御策】未対応のEnum値が渡された場合のエラー
+                Err.Raise vbObjectError + 1006, , "未対応の出力形式が指定されました（Enum値: " & fmt & "）。"
+        End Select
 
         If Err.Number <> 0 Then
             errNum = Err.Number
@@ -548,15 +553,31 @@ Private Sub UpdatePageRangeUI()
     End If
 End Sub
 
-Private Function GetSelectedFormatType() As modPdfExport.ExportFormatType
+Private Function GetSelectedFormatType() As ExportFormatType
     ' optExportPdf、optExportExcel、optExportExcelFormula はフォーム上に固定配置されている前提
     ' UserForm_Initialize で存在チェック済み
-    If Me.Controls("optExportExcelFormula").Value Then
-        GetSelectedFormatType = modPdfExport.ExportFormatExcelXlsxFormula
-    ElseIf Me.Controls("optExportExcel").Value Then
-        GetSelectedFormatType = modPdfExport.ExportFormatExcelXlsx
+    ' 【防御策】存在チェック（既にUserForm_Initializeでチェック済みだが、念のため）
+    Dim optPdf As Object, optExcel As Object, optExcelFormula As Object
+    On Error Resume Next
+    Set optPdf = Me.Controls("optExportPdf")
+    Set optExcel = Me.Controls("optExportExcel")
+    Set optExcelFormula = Me.Controls("optExportExcelFormula")
+    On Error GoTo 0
+    
+    ' コントロールが存在しない場合はデフォルト（PDF）を返す
+    If optPdf Is Nothing Or optExcel Is Nothing Or optExcelFormula Is Nothing Then
+        GetSelectedFormatType = ExportFormatPdf
+        Exit Function
+    End If
+    
+    ' 選択状態を確認（優先順位：Excel関数保持 > Excel値貼り > PDF）
+    If optExcelFormula.Value Then
+        GetSelectedFormatType = ExportFormatExcelXlsxFormula
+    ElseIf optExcel.Value Then
+        GetSelectedFormatType = ExportFormatExcelXlsx
     Else
-        GetSelectedFormatType = modPdfExport.ExportFormatPdf
+        ' デフォルトはPDF（optPdf.ValueがTrue、またはすべてFalseの場合）
+        GetSelectedFormatType = ExportFormatPdf
     End If
 End Function
 

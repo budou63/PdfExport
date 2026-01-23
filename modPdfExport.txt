@@ -478,6 +478,9 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
     Set wsNew = wbNew.Worksheets(1)
 
     ' 値貼り付け処理は行わない（数式・関数を保持）
+    
+    ' 【追加】外部参照を内部参照に正規化（元ブックを指す外部参照のみ）
+    Call 正規化外部参照_関数保持(wbNew, wb.Name)
 
     wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
     wbNew.Close SaveChanges:=False
@@ -571,6 +574,9 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
             ' 値貼り付け処理は行わない（数式・関数を保持）
         End If
     Next i
+
+    ' 【追加】外部参照を内部参照に正規化（元ブックを指す外部参照のみ）
+    Call 正規化外部参照_関数保持(wbNew, wb.Name)
 
     ' 保存
     wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
@@ -853,4 +859,204 @@ Private Function ユニークファイル名生成(ByVal outDir As String, ByVal
             Err.Raise vbObjectError + 1003, , "ファイル名の生成に失敗しました（同名ファイルが多すぎます）。"
         End If
     Loop
+End Function
+
+' 外部参照を内部参照に正規化（関数保持出力用）
+' wbNew: 新規作成されたブック（正規化対象）
+' sourceWbName: 元ブック名（このブックを指す外部参照のみを正規化）
+Private Sub 正規化外部参照_関数保持(ByVal wbNew As Workbook, ByVal sourceWbName As String)
+    If wbNew Is Nothing Then Exit Sub
+    If Len(sourceWbName) = 0 Then Exit Sub
+    
+    Dim ws As Worksheet
+    Dim rng As Range
+    Dim cell As Range
+    Dim formula As String
+    Dim normalizedFormula As String
+    Dim hasChanged As Boolean
+    Dim savedCalculation As XlCalculation
+    Dim savedScreenUpdating As Boolean
+    
+    ' 現在の設定を保存
+    savedCalculation = Application.Calculation
+    savedScreenUpdating = Application.ScreenUpdating
+    
+    ' 計算を一時停止（高速化）
+    Application.Calculation = xlCalculationManual
+    Application.ScreenUpdating = False
+    
+    On Error Resume Next
+    
+    ' すべてのシートをループ
+    For Each ws In wbNew.Worksheets
+        ' UsedRangeが存在しない場合はスキップ
+        Set rng = ws.UsedRange
+        If rng Is Nothing Then GoTo NextSheet
+        
+        ' HasFormulaセルのみを処理（高速化のためSpecialCellsを使用）
+        Err.Clear
+        Set rng = rng.SpecialCells(xlCellTypeFormulas)
+        
+        ' SpecialCellsが失敗した場合は、UsedRange全体をループ（フォールバック）
+        If Err.Number <> 0 Or rng Is Nothing Then
+            Err.Clear
+            Set rng = ws.UsedRange
+            If rng Is Nothing Then GoTo NextSheet
+        End If
+        
+        ' 各セルをループ
+        For Each cell In rng
+            ' エラーが発生したセルはスキップ
+            If Err.Number <> 0 Then
+                Err.Clear
+                GoTo NextCell
+            End If
+            
+            If cell.HasFormula Then
+                formula = cell.Formula
+                If Len(formula) > 0 Then
+                    ' 外部参照を正規化
+                    normalizedFormula = 正規化式_内部参照(formula, sourceWbName)
+                    If normalizedFormula <> formula Then
+                        ' 式が変更された場合は再設定
+                        Err.Clear
+                        cell.Formula = normalizedFormula
+                        If Err.Number = 0 Then
+                            hasChanged = True
+                        Else
+                            ' 式の設定に失敗した場合は元の式を保持
+                            Err.Clear
+                        End If
+                    End If
+                End If
+            End If
+            
+NextCell:
+        Next cell
+        
+NextSheet:
+    Next ws
+    
+    On Error GoTo 0
+    
+    ' 計算と画面更新を元に戻す
+    Application.Calculation = savedCalculation
+    Application.ScreenUpdating = savedScreenUpdating
+End Sub
+
+' 式内の外部参照を内部参照に正規化（補助関数）
+' formula: 変換対象の式
+' sourceWbName: 元ブック名（このブックを指す外部参照のみを変換）
+' 戻り値: 正規化された式
+Private Function 正規化式_内部参照(ByVal formula As String, ByVal sourceWbName As String) As String
+    If Len(formula) = 0 Or Len(sourceWbName) = 0 Then
+        正規化式_内部参照 = formula
+        Exit Function
+    End If
+    
+    Dim result As String
+    Dim pos As Long
+    Dim bracketStart As Long
+    Dim bracketEnd As Long
+    Dim exclamationPos As Long
+    Dim wbNameInFormula As String
+    Dim sourceWbNameNoExt As String
+    Dim wbNameInFormulaNoExt As String
+    Dim sheetNameStart As Long
+    Dim sheetNameEnd As Long
+    Dim sheetName As String
+    Dim refPart As String
+    Dim beforePart As String
+    Dim afterPart As String
+    Dim pathStart As Long
+    Dim ch As String
+    
+    result = formula
+    sourceWbNameNoExt = RemoveExtension(sourceWbName)
+    
+    ' 元ブック名を含む外部参照パターンを検索
+    ' パターン1: ='\\path\[ブック名]シート名'!セル
+    ' パターン2: =[ブック名]シート名!セル
+    ' パターン3: ='[ブック名]シート名'!セル
+    
+    pos = 1
+    Do
+        ' [ を検索
+        bracketStart = InStr(pos, result, "[")
+        If bracketStart = 0 Then Exit Do
+        
+        ' ] を検索
+        bracketEnd = InStr(bracketStart + 1, result, "]")
+        If bracketEnd = 0 Then Exit Do
+        
+        ' ブック名を抽出
+        wbNameInFormula = Mid$(result, bracketStart + 1, bracketEnd - bracketStart - 1)
+        wbNameInFormulaNoExt = RemoveExtension(wbNameInFormula)
+        
+        ' 元ブック名と一致するか確認（拡張子を除いて比較）
+        If StrComp(sourceWbNameNoExt, wbNameInFormulaNoExt, vbTextCompare) = 0 Or _
+           StrComp(sourceWbName, wbNameInFormula, vbTextCompare) = 0 Then
+            ' 元ブックを指す外部参照を検出
+            
+            ' ! の位置を検索
+            exclamationPos = InStr(bracketEnd + 1, result, "!")
+            If exclamationPos = 0 Then
+                pos = bracketEnd + 1
+                GoTo NextBracket
+            End If
+            
+            ' シート名の開始位置（]の後、'があればスキップ）
+            sheetNameStart = bracketEnd + 1
+            If sheetNameStart <= Len(result) And Mid$(result, sheetNameStart, 1) = "'" Then
+                sheetNameStart = sheetNameStart + 1
+            End If
+            
+            ' シート名の終了位置（!の前、'があればスキップ）
+            sheetNameEnd = exclamationPos - 1
+            If sheetNameEnd > 0 And Mid$(result, sheetNameEnd, 1) = "'" Then
+                sheetNameEnd = sheetNameEnd - 1
+            End If
+            
+            If sheetNameStart <= sheetNameEnd And sheetNameEnd > 0 Then
+                sheetName = Mid$(result, sheetNameStart, sheetNameEnd - sheetNameStart + 1)
+                refPart = Mid$(result, exclamationPos + 1)
+                
+                ' パスの開始位置を検索（[の前の '\\path\ 部分）
+                pathStart = bracketStart
+                If pathStart > 1 Then
+                    ' 前の部分を逆方向に検索
+                    Dim i As Long
+                    For i = bracketStart - 1 To 1 Step -1
+                        ch = Mid$(result, i, 1)
+                        If ch = "'" Or ch = "=" Then
+                            If ch = "'" Then
+                                pathStart = i + 1
+                            Else
+                                pathStart = i + 1
+                            End If
+                            Exit For
+                        ElseIf ch <> " " And ch <> vbTab Then
+                            Exit For
+                        End If
+                    Next i
+                End If
+                
+                ' 置換: パス[ブック名]シート名'! → シート名!
+                beforePart = Left$(result, pathStart - 1)
+                afterPart = sheetName & "!" & refPart
+                result = beforePart & afterPart
+                
+                ' 次の検索は置換後の位置から
+                pos = pathStart + Len(sheetName) + 2
+            Else
+                pos = bracketEnd + 1
+            End If
+        Else
+            pos = bracketEnd + 1
+        End If
+        
+NextBracket:
+    Loop
+    
+    正規化式_内部参照 = result
 End Function

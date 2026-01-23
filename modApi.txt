@@ -53,3 +53,28 @@ Public Sub PdfExport_ExcelExport(ByVal sheetName As String, _
     ' modPdfExportの日本語実処理を呼ぶ
     Call modPdfExport.Excel_出力実行(sheetName, outDirUi, fileNameUi, targetWb)
 End Sub
+
+' 指定シートをExcel形式（関数保持）で保存
+' 【修正】フォームからの呼び出し用API（モジュール修飾不要で確実に呼べる）
+' sheetName: シート名
+' outDirUi: 出力先フォルダ（UIで指定された値）
+' fileNameUi: ファイル名（UIで指定された値、空なら自動生成）
+' targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub PdfExport_ExcelExportFormula(ByVal sheetName As String, _
+                                         ByVal outDirUi As String, _
+                                         ByVal fileNameUi As String, _
+                                         Optional ByVal targetWb As Workbook = Nothing)
+    ' modPdfExportの日本語実処理を呼ぶ
+    Call modPdfExport.Excel_出力実行_関数保持(sheetName, outDirUi, fileNameUi, targetWb)
+End Sub
+
+' 複数シートを1つのExcelファイルにまとめて保存（関数保持）
+' 【修正】フォームからの呼び出し用API（モジュール修飾不要で確実に呼べる）
+' sheetNames: シート名の配列
+' outDirUi: 出力先フォルダ（UIで指定された値）
+' fileNameUi: ファイル名（UIで指定された値、空なら自動生成）
+' targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub PdfExport_ExcelMultiExportFormula(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
+    ' modPdfExportの日本語実処理を呼ぶ
+    Call modPdfExport.Excel_複数シート出力実行_関数保持(sheetNames, outDirUi, fileNameUi, targetWb)
+End Sub

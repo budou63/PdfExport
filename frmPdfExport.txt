@@ -52,6 +52,11 @@ Private Sub UserForm_Initialize()
                "optExportExcel が見つかりません。", vbCritical
         Exit Sub
     End If
+    If Not ControlExists(Me, "optExportExcelFormula") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "optExportExcelFormula が見つかりません。", vbCritical
+        Exit Sub
+    End If
     If Not ControlExists(Me, "lstSheets") Then
         MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
                "lstSheets が見つかりません。", vbCritical
@@ -96,9 +101,11 @@ Private Sub UserForm_Initialize()
     ' === 出力形式コントロールの初期化（PDF をデフォルト選択、Excel は非選択） ===
     Me.Controls("optExportPdf").Value = True
     Me.Controls("optExportExcel").Value = False
+    Me.Controls("optExportExcelFormula").Value = False
     ' 同一グループ化（明示的に揃える）
     Me.Controls("optExportPdf").GroupName = "grpExportFormat"
     Me.Controls("optExportExcel").GroupName = "grpExportFormat"
+    Me.Controls("optExportExcelFormula").GroupName = "grpExportFormat"
 
     ' === ListBox の初期化（複数選択可能） ===
     Me.Controls("lstSheets").MultiSelect = fmMultiSelectMulti
@@ -246,6 +253,23 @@ Private Sub cmdExport_Click()
         SaveSetting "PdfExport", "Settings", "OutDir", outDir
         Exit Sub
     End If
+    
+    ' 【修正】Excel（関数保持）出力かつ複数選択時は1つのファイルにまとめて保存（数式保持）
+    ' [FIX] mTargetWbを渡す
+    ' 【修正】modApiの英数字APIを直接呼ぶ（モジュール修飾不要、確実に呼べる）
+    If fmt = ExportFormatExcelXlsxFormula And selCount > 1 Then
+        Dim baseFileNameMultiFormula As String
+        baseFileNameMultiFormula = Trim$(txtFileName.Text)
+        On Error Resume Next
+        Call PdfExport_ExcelMultiExportFormula(selectedSheets, outDir, baseFileNameMultiFormula, mTargetWb)
+        If Err.Number <> 0 Then
+            MsgBox "Excel出力（関数保持）でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
+        End If
+        On Error GoTo 0
+        ' 成功したら保存（次回の初期値用）
+        SaveSetting "PdfExport", "Settings", "OutDir", outDir
+        Exit Sub
+    End If
 
     ' PDF出力、またはExcel単一選択時：選択された各シートに対して個別に出力
     Dim sh As String
@@ -294,10 +318,14 @@ Private Sub cmdExport_Click()
         If fmt = ExportFormatPdf Then
             ' 【修正】modApiの英数字APIを直接呼ぶ（モジュール修飾不要、確実に呼べる）
             Call PdfExport_PdfExport(sh, f, t, allPages, outDir, fileNameForSheet, mTargetWb)
-        Else
-            ' Excel単一選択時
+        ElseIf fmt = ExportFormatExcelXlsx Then
+            ' Excel単一選択時（値貼り付け）
             ' 【修正】modApiの英数字APIを直接呼ぶ（モジュール修飾不要、確実に呼べる）
             Call PdfExport_ExcelExport(sh, outDir, fileNameForSheet, mTargetWb)
+        ElseIf fmt = ExportFormatExcelXlsxFormula Then
+            ' Excel単一選択時（関数保持）
+            ' 【修正】modApiの英数字APIを直接呼ぶ（モジュール修飾不要、確実に呼べる）
+            Call PdfExport_ExcelExportFormula(sh, outDir, fileNameForSheet, mTargetWb)
         End If
 
         If Err.Number <> 0 Then
@@ -521,9 +549,11 @@ Private Sub UpdatePageRangeUI()
 End Sub
 
 Private Function GetSelectedFormatType() As ExportFormatType
-    ' optExportPdf と optExportExcel はフォーム上に固定配置されている前提
+    ' optExportPdf、optExportExcel、optExportExcelFormula はフォーム上に固定配置されている前提
     ' UserForm_Initialize で存在チェック済み
-    If Me.Controls("optExportExcel").Value Then
+    If Me.Controls("optExportExcelFormula").Value Then
+        GetSelectedFormatType = ExportFormatExcelXlsxFormula
+    ElseIf Me.Controls("optExportExcel").Value Then
         GetSelectedFormatType = ExportFormatExcelXlsx
     Else
         GetSelectedFormatType = ExportFormatPdf

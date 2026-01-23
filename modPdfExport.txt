@@ -8,6 +8,7 @@ Option Explicit
 Public Enum ExportFormatType
     ExportFormatPdf = 1
     ExportFormatExcelXlsx = 2
+    ExportFormatExcelXlsxFormula = 3
 End Enum
 
 '=== 既定の保存先（空ならフォームの入力、空ならブック\PDF） ===
@@ -201,6 +202,8 @@ Public Sub 土地調書_出力実行(ByVal sheetName As String, _
             Call PDF_出力実行(sheetName, fromPage, toPage, allPages, outDirUi, fileNameUi, targetWb)
         Case ExportFormatExcelXlsx
             Call Excel_出力実行(sheetName, outDirUi, fileNameUi, targetWb)
+        Case ExportFormatExcelXlsxFormula
+            Call Excel_出力実行_関数保持(sheetName, outDirUi, fileNameUi, targetWb)
         Case Else
             Err.Raise vbObjectError + 310, , "未対応の出力形式が指定されました。"
     End Select
@@ -410,6 +413,191 @@ EH:
         On Error GoTo 0
     End If
     MsgBox "Excel出力でエラー: " & Err.Description, vbCritical
+
+Q:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub
+
+' 指定シートを Excel 形式（関数保持）で保存
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
+                                   ByVal outDirUi As String, _
+                                   ByVal fileNameUi As String, _
+                                   Optional ByVal targetWb As Workbook = Nothing)
+
+    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
+    Dim wb As Workbook
+    If targetWb Is Nothing Then
+        Set wb = ActiveWorkbook
+    Else
+        Set wb = targetWb
+    End If
+
+    Dim ws As Worksheet
+    ' [FIX] シート取得にtargetWbを渡す
+    Set ws = シート取得(sheetName, wb)
+    If ws Is Nothing Then
+        MsgBox "シートが見つかりません: " & sheetName, vbExclamation
+        Exit Sub
+    End If
+
+    Dim outDir As String
+    ' [FIX] 解決出力先にtargetWbを渡す
+    outDir = 解決出力先(outDirUi, wb)
+    If Len(outDir) = 0 Then
+        MsgBox "出力先フォルダが指定されていません。", vbExclamation
+        Exit Sub
+    End If
+    フォルダ作成 outDir
+
+    '=== ファイル名決定 ===
+    Dim baseName As String
+    baseName = Trim$(fileNameUi)
+    If Len(baseName) = 0 Then
+        baseName = 置換不可文字除去(ws.Name & "_" & Format(Now, "yyyymmdd_HHMMSS"))
+    Else
+        baseName = 置換不可文字除去(RemoveExtension(baseName))
+    End If
+
+    ' 【修正】同名ファイル上書き回避を追加
+    Dim fn As String
+    fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    Dim wbNew As Workbook
+    Dim wsNew As Worksheet
+
+    On Error GoTo EH
+
+    ' [FIX] targetWb内のシートをコピー（数式保持のため値貼り付け処理は行わない）
+    ws.Copy
+    Set wbNew = ActiveWorkbook
+    Set wsNew = wbNew.Worksheets(1)
+
+    ' 値貼り付け処理は行わない（数式・関数を保持）
+
+    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
+    wbNew.Close SaveChanges:=False
+
+    MsgBox "Excel出力（関数保持）が完了しました。" & vbCrLf & fn, vbInformation
+    GoTo Q
+
+EH:
+    If Not wbNew Is Nothing Then
+        On Error Resume Next
+        wbNew.Close SaveChanges:=False
+        On Error GoTo 0
+    End If
+    MsgBox "Excel出力でエラー: " & Err.Description, vbCritical
+
+Q:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub
+
+' 複数シートを1つのExcelファイルにまとめて保存（関数保持）
+' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
+
+    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
+    Dim wb As Workbook
+    If targetWb Is Nothing Then
+        Set wb = ActiveWorkbook
+    Else
+        Set wb = targetWb
+    End If
+
+    Dim i As Long
+    Dim ws As Worksheet
+    Dim wbNew As Workbook
+    Dim wsNew As Worksheet
+    Dim outDir As String
+    Dim baseName As String
+    Dim fn As String
+
+    ' [FIX] シート名の検証（targetWbを渡す）
+    For i = LBound(sheetNames) To UBound(sheetNames)
+        Set ws = シート取得(sheetNames(i), wb)
+        If ws Is Nothing Then
+            Err.Raise vbObjectError + 1001, , "シートが見つかりません: " & sheetNames(i)
+        End If
+    Next i
+
+    ' [FIX] 出力先の解決（targetWbを渡す）
+    outDir = 解決出力先(outDirUi, wb)
+    If Len(outDir) = 0 Then
+        Err.Raise vbObjectError + 1002, , "出力先フォルダが指定されていません。"
+    End If
+    フォルダ作成 outDir
+
+    ' ファイル名決定
+    baseName = Trim$(fileNameUi)
+    If Len(baseName) = 0 Then
+        baseName = 置換不可文字除去("Export_" & Format(Now, "yyyymmdd_HHMMSS"))
+    Else
+        baseName = 置換不可文字除去(RemoveExtension(baseName))
+    End If
+
+    ' 同名ファイルが存在する場合は末尾に _001, _002... を付けて上書き回避
+    fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    On Error GoTo EH
+
+    ' [FIX] 最初のシートをコピーして新規ブックを生成（targetWbから）
+    Set ws = シート取得(sheetNames(LBound(sheetNames)), wb)
+    If ws Is Nothing Then
+        Err.Raise vbObjectError + 1004, , "最初のシートが見つかりません: " & sheetNames(LBound(sheetNames))
+    End If
+    
+    ws.Copy
+    Set wbNew = ActiveWorkbook
+    Set wsNew = wbNew.Worksheets(1)
+    
+    ' 値貼り付け処理は行わない（数式・関数を保持）
+
+    ' 2枚目以降のシートをコピーして新規ブックに追加（targetWbから）
+    For i = LBound(sheetNames) + 1 To UBound(sheetNames)
+        Set ws = シート取得(sheetNames(i), wb)
+        If Not ws Is Nothing Then
+            ws.Copy After:=wbNew.Worksheets(wbNew.Worksheets.Count)
+            Set wsNew = wbNew.Worksheets(wbNew.Worksheets.Count)
+            
+            ' 値貼り付け処理は行わない（数式・関数を保持）
+        End If
+    Next i
+
+    ' 保存
+    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
+    wbNew.Close SaveChanges:=True
+
+    MsgBox "Excel出力（関数保持）が完了しました。" & vbCrLf & _
+           "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
+           fn, vbInformation
+    GoTo Q
+
+EH:
+    Dim errNum As Long
+    Dim errDesc As String
+    errNum = Err.Number
+    errDesc = Err.Description
+    
+    ' クリーンアップ
+    If Not wbNew Is Nothing Then
+        On Error Resume Next
+        wbNew.Close SaveChanges:=False
+        On Error GoTo 0
+    End If
+    
+    ' エラーを呼び出し側に伝播
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    Err.Raise errNum, , errDesc
 
 Q:
     Application.DisplayAlerts = True

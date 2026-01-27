@@ -392,9 +392,9 @@ End Sub
 Private Sub cmdPrint_Click()
     ' 変更点:
     ' 1) modNoFillExport を明示的に呼び出す
-    ' 2) PrintOut 直叩きを廃止し、印刷ダイアログを使用
-    ' 3) 複数シート選択時は選択状態を作ってからダイアログ表示
-    ' 4) エラー/キャンセル時でも必ず塗りつぶしを復元する
+    ' 2) 印刷ダイアログを使わず PrintOut で印刷
+    ' 3) 複数シート選択時は選択状態を作ってまとめて印刷
+    ' 4) エラー時でも必ず塗りつぶしを復元する
 
     ' [FIX] 対象ブックが無効な場合は処理を中断
     If mTargetWb Is Nothing Then
@@ -410,6 +410,30 @@ Private Sub cmdPrint_Click()
         Exit Sub
     End If
 
+    ' ページ範囲の取得（単一選択時のみ有効）
+    Dim f As Variant, t As Variant
+    Dim allPages As Boolean
+    If selCount = 1 Then
+        allPages = chkAll.Value
+        If allPages Then
+            f = Empty: t = Empty
+        Else
+            If Len(Trim$(txtFrom.Text)) = 0 Or Len(Trim$(txtTo.Text)) = 0 Then
+                MsgBox "ページ範囲（開始/終了）を入力してください。", vbExclamation
+                Exit Sub
+            End If
+            f = CLng(Val(txtFrom.Text))
+            t = CLng(Val(txtTo.Text))
+            If f <= 0 Or t < f Then
+                MsgBox "ページ範囲の指定が不正です。", vbExclamation
+                Exit Sub
+            End If
+        End If
+    Else
+        allPages = True
+        f = Empty: t = Empty
+    End If
+
     Dim sheetNames As Collection
     Set sheetNames = New Collection
     Dim i As Long
@@ -422,19 +446,26 @@ Private Sub cmdPrint_Click()
     Set savedActiveSheet = ActiveSheet
     Set savedActiveWorkbook = ActiveWorkbook
 
+    Dim savedScreenUpdating As Boolean
+    Dim savedEnableEvents As Boolean
+    Dim savedDisplayAlerts As Boolean
+    savedScreenUpdating = Application.ScreenUpdating
+    savedEnableEvents = Application.EnableEvents
+    savedDisplayAlerts = Application.DisplayAlerts
+
     Dim captured As Object
     Dim needRestore As Boolean
     needRestore = False
 
     On Error GoTo EH
 
-    If ControlExists(Me, "chkNoFill") Then
-        If Me.Controls("chkNoFill").Value = True Then
-            Set captured = modNoFillExport.CaptureInteriors(mTargetWb, sheetNames)
-            modNoFillExport.ApplyNoFill mTargetWb, captured
-            needRestore = True
-        End If
-    End If
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+
+    Set captured = modNoFillExport.CaptureInteriors(mTargetWb, sheetNames)
+    modNoFillExport.ApplyNoFill mTargetWb, captured
+    needRestore = True
 
     ' 印刷対象のシートを選択状態にする
     mTargetWb.Activate
@@ -454,15 +485,14 @@ Private Sub cmdPrint_Click()
         End If
     Next i
 
-    If selCount = 1 And chkAll.Value = False Then
-        MsgBox "ページ範囲は印刷ダイアログで指定してください。", vbInformation
-    End If
-
-    ' 基本方針: 印刷ダイアログを表示してユーザーに印刷設定を委ねる
-    Dim dialogResult As Boolean
-    dialogResult = Application.Dialogs(xlDialogPrint).Show
-    If dialogResult = False Then
-        GoTo CleanUp
+    If selCount > 1 Then
+        ActiveWindow.SelectedSheets.PrintOut
+    Else
+        If allPages Then
+            ws.PrintOut
+        Else
+            ws.PrintOut From:=f, To:=t
+        End If
     End If
 
 CleanUp:
@@ -481,6 +511,9 @@ CleanUp:
         End If
         On Error GoTo 0
     End If
+    Application.ScreenUpdating = savedScreenUpdating
+    Application.EnableEvents = savedEnableEvents
+    Application.DisplayAlerts = savedDisplayAlerts
     Exit Sub
 
 EH:

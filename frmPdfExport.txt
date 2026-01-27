@@ -97,8 +97,14 @@ Private Sub UserForm_Initialize()
                "cmdExport が見つかりません。", vbCritical
         Exit Sub
     End If
+    If Not ControlExists(Me, "cmdPrint") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "cmdPrint が見つかりません。", vbCritical
+        Exit Sub
+    End If
 
     ' === 出力形式コントロールの初期化（PDF をデフォルト選択、Excel は非選択） ===
+    Me.Controls("cmdPrint").Caption = "印刷"
     Me.Controls("optExportPdf").Value = True
     Me.Controls("optExportExcel").Value = False
     Me.Controls("optExportExcelFormula").Value = False
@@ -381,6 +387,109 @@ End Sub
 
 Private Sub cmdCancel_Click()
     Unload Me
+End Sub
+
+Private Sub cmdPrint_Click()
+    ' 変更点:
+    ' 1) modNoFillExport を明示的に呼び出す
+    ' 2) PrintOut 直叩きを廃止し、印刷ダイアログを使用
+    ' 3) 複数シート選択時は選択状態を作ってからダイアログ表示
+    ' 4) エラー/キャンセル時でも必ず塗りつぶしを復元する
+
+    ' [FIX] 対象ブックが無効な場合は処理を中断
+    If mTargetWb Is Nothing Then
+        MsgBox "印刷対象ブックが設定されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim selCount As Long
+    selCount = GetSelectedSheetCount()
+
+    If selCount = 0 Then
+        MsgBox "シートを選択してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim sheetNames As Collection
+    Set sheetNames = New Collection
+    Dim i As Long
+    For i = 0 To selCount - 1
+        sheetNames.Add GetSelectedSheetName(i)
+    Next i
+
+    Dim savedActiveSheet As Worksheet
+    Dim savedActiveWorkbook As Workbook
+    Set savedActiveSheet = ActiveSheet
+    Set savedActiveWorkbook = ActiveWorkbook
+
+    Dim captured As Object
+    Dim needRestore As Boolean
+    needRestore = False
+
+    On Error GoTo EH
+
+    If ControlExists(Me, "chkNoFill") Then
+        If Me.Controls("chkNoFill").Value = True Then
+            Set captured = modNoFillExport.CaptureInteriors(mTargetWb, sheetNames)
+            modNoFillExport.ApplyNoFill mTargetWb, captured
+            needRestore = True
+        End If
+    End If
+
+    ' 印刷対象のシートを選択状態にする
+    mTargetWb.Activate
+    Dim ws As Worksheet
+    For i = 1 To sheetNames.Count
+        Set ws = Nothing
+        On Error Resume Next
+        Set ws = mTargetWb.Worksheets(CStr(sheetNames(i)))
+        On Error GoTo EH
+        If ws Is Nothing Then
+            Err.Raise vbObjectError + 1100, , "印刷対象のシートが見つかりません: " & CStr(sheetNames(i))
+        End If
+        If i = 1 Then
+            ws.Select
+        Else
+            ws.Select Replace:=False
+        End If
+    Next i
+
+    If selCount = 1 And chkAll.Value = False Then
+        MsgBox "ページ範囲は印刷ダイアログで指定してください。", vbInformation
+    End If
+
+    ' 基本方針: 印刷ダイアログを表示してユーザーに印刷設定を委ねる
+    Dim dialogResult As Boolean
+    dialogResult = Application.Dialogs(xlDialogPrint).Show
+    If dialogResult = False Then
+        GoTo CleanUp
+    End If
+
+CleanUp:
+    If needRestore Then
+        On Error Resume Next
+        modNoFillExport.RestoreInteriors mTargetWb, captured
+        On Error GoTo 0
+    End If
+
+    ' [FIX] ActiveSheet/ActiveWorkbookを元に戻す（副作用の最小化）
+    If Not savedActiveWorkbook Is Nothing Then
+        On Error Resume Next
+        savedActiveWorkbook.Activate
+        If Not savedActiveSheet Is Nothing Then
+            savedActiveSheet.Activate
+        End If
+        On Error GoTo 0
+    End If
+    Exit Sub
+
+EH:
+    Dim msg As String
+    msg = "印刷でエラーが発生しました。" & vbCrLf & _
+          "エラー番号: " & Err.Number & vbCrLf & _
+          "内容: " & Err.Description
+    MsgBox msg, vbExclamation
+    Resume CleanUp
 End Sub
 
 '---------------------- 内部処理 ------------------------------

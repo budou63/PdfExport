@@ -1,0 +1,160 @@
+Option Explicit
+
+'============================================================
+' セル塗りつぶしを一時的に退避・除去・復元する共通モジュール
+' 呼び出し元: frmPdfExport の印刷処理やPDF/Excel出力処理を想定
+'============================================================
+
+' 対象セルの塗りつぶし情報を退避する
+Public Function CaptureInteriors( _
+    ByVal wb As Workbook, _
+    ByVal sheetNames As Collection _
+) As Object
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+
+    ' 安全策：引数が無効なら空のDictionaryを返す
+    If wb Is Nothing Then
+        Set CaptureInteriors = dict
+        Exit Function
+    End If
+    If sheetNames Is Nothing Then
+        Set CaptureInteriors = dict
+        Exit Function
+    End If
+    If sheetNames.Count = 0 Then
+        Set CaptureInteriors = dict
+        Exit Function
+    End If
+
+    On Error Resume Next
+    Dim i As Long
+    For i = 1 To sheetNames.Count
+        Dim ws As Worksheet
+        Set ws = Nothing
+        Set ws = wb.Worksheets(CStr(sheetNames(i)))
+        If ws Is Nothing Then
+            GoTo NextSheet
+        End If
+
+        Dim targetRange As Range
+        Set targetRange = Nothing
+        Set targetRange = ws.UsedRange
+        If targetRange Is Nothing Then
+            GoTo NextSheet
+        End If
+
+        Dim cell As Range
+        For Each cell In targetRange.Cells
+            If cell Is Nothing Then
+                GoTo NextCell
+            End If
+            ' 直接設定された塗りつぶしのみ対象（条件付き書式は無視）
+            If cell.Interior.Pattern <> xlNone Then
+                Dim key As String
+                key = ws.Name & "!" & cell.Address(False, False)
+
+                Dim info(1 To 7) As Variant
+                info(1) = cell.Interior.Pattern
+                info(2) = cell.Interior.Color
+                info(3) = cell.Interior.ColorIndex
+                info(4) = cell.Interior.TintAndShade
+                info(5) = cell.Interior.PatternColor
+                info(6) = cell.Interior.PatternColorIndex
+                info(7) = cell.Interior.PatternTintAndShade
+
+                dict(key) = info
+            End If
+NextCell:
+        Next cell
+NextSheet:
+    Next i
+    On Error GoTo 0
+
+    Set CaptureInteriors = dict
+End Function
+
+' 退避済みのセルに対して塗りつぶしを除去する
+Public Sub ApplyNoFill( _
+    ByVal wb As Workbook, _
+    ByVal captured As Object _
+)
+    ' 呼び出し元: frmPdfExport の印刷/出力処理
+    If wb Is Nothing Then Exit Sub
+    If captured Is Nothing Then Exit Sub
+    If captured.Count = 0 Then Exit Sub
+
+    On Error Resume Next
+    Dim key As Variant
+    For Each key In captured.Keys
+        Dim wsName As String
+        Dim addr As String
+        wsName = Split(CStr(key), "!")(0)
+        addr = Split(CStr(key), "!")(1)
+
+        Dim ws As Worksheet
+        Set ws = Nothing
+        Set ws = wb.Worksheets(wsName)
+        If ws Is Nothing Then
+            GoTo NextKey
+        End If
+
+        Dim cell As Range
+        Set cell = ws.Range(addr)
+        If cell Is Nothing Then
+            GoTo NextKey
+        End If
+
+        ' 塗りつぶし除去は最小限（パターンのみ削除）
+        cell.Interior.Pattern = xlNone
+NextKey:
+    Next key
+    On Error GoTo 0
+End Sub
+
+' 退避済みの塗りつぶし情報を復元する
+Public Sub RestoreInteriors( _
+    ByVal wb As Workbook, _
+    ByVal captured As Object _
+)
+    ' 呼び出し元: frmPdfExport の印刷/出力処理
+    If wb Is Nothing Then Exit Sub
+    If captured Is Nothing Then Exit Sub
+    If captured.Count = 0 Then Exit Sub
+
+    On Error Resume Next
+    Dim key As Variant
+    For Each key In captured.Keys
+        Dim wsName As String
+        Dim addr As String
+        wsName = Split(CStr(key), "!")(0)
+        addr = Split(CStr(key), "!")(1)
+
+        Dim ws As Worksheet
+        Set ws = Nothing
+        Set ws = wb.Worksheets(wsName)
+        If ws Is Nothing Then
+            GoTo NextKey
+        End If
+
+        Dim cell As Range
+        Set cell = ws.Range(addr)
+        If cell Is Nothing Then
+            GoTo NextKey
+        End If
+
+        Dim info As Variant
+        info = captured(key)
+
+        ' 復元は可能な範囲で実行（個別に失敗しても継続）
+        cell.Interior.Pattern = info(1)
+        cell.Interior.Color = info(2)
+        cell.Interior.ColorIndex = info(3)
+        cell.Interior.TintAndShade = info(4)
+        cell.Interior.PatternColor = info(5)
+        cell.Interior.PatternColorIndex = info(6)
+        cell.Interior.PatternTintAndShade = info(7)
+NextKey:
+    Next key
+    On Error GoTo 0
+End Sub

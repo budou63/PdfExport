@@ -97,8 +97,14 @@ Private Sub UserForm_Initialize()
                "cmdExport が見つかりません。", vbCritical
         Exit Sub
     End If
+    If Not ControlExists(Me, "cmdPrint") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "cmdPrint が見つかりません。", vbCritical
+        Exit Sub
+    End If
 
     ' === 出力形式コントロールの初期化（PDF をデフォルト選択、Excel は非選択） ===
+    Me.Controls("cmdPrint").Caption = "印刷"
     Me.Controls("optExportPdf").Value = True
     Me.Controls("optExportExcel").Value = False
     Me.Controls("optExportExcelFormula").Value = False
@@ -381,6 +387,142 @@ End Sub
 
 Private Sub cmdCancel_Click()
     Unload Me
+End Sub
+
+Private Sub cmdPrint_Click()
+    ' 変更点:
+    ' 1) modNoFillExport を明示的に呼び出す
+    ' 2) 印刷ダイアログを使わず PrintOut で印刷
+    ' 3) 複数シート選択時は選択状態を作ってまとめて印刷
+    ' 4) エラー時でも必ず塗りつぶしを復元する
+
+    ' [FIX] 対象ブックが無効な場合は処理を中断
+    If mTargetWb Is Nothing Then
+        MsgBox "印刷対象ブックが設定されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim selCount As Long
+    selCount = GetSelectedSheetCount()
+
+    If selCount = 0 Then
+        MsgBox "シートを選択してください。", vbExclamation
+        Exit Sub
+    End If
+
+    ' ページ範囲の取得（単一選択時のみ有効）
+    Dim f As Variant, t As Variant
+    Dim allPages As Boolean
+    If selCount = 1 Then
+        allPages = chkAll.Value
+        If allPages Then
+            f = Empty: t = Empty
+        Else
+            If Len(Trim$(txtFrom.Text)) = 0 Or Len(Trim$(txtTo.Text)) = 0 Then
+                MsgBox "ページ範囲（開始/終了）を入力してください。", vbExclamation
+                Exit Sub
+            End If
+            f = CLng(Val(txtFrom.Text))
+            t = CLng(Val(txtTo.Text))
+            If f <= 0 Or t < f Then
+                MsgBox "ページ範囲の指定が不正です。", vbExclamation
+                Exit Sub
+            End If
+        End If
+    Else
+        allPages = True
+        f = Empty: t = Empty
+    End If
+
+    Dim sheetNames As Collection
+    Set sheetNames = New Collection
+    Dim i As Long
+    For i = 0 To selCount - 1
+        sheetNames.Add GetSelectedSheetName(i)
+    Next i
+
+    Dim savedActiveSheet As Worksheet
+    Dim savedActiveWorkbook As Workbook
+    Set savedActiveSheet = ActiveSheet
+    Set savedActiveWorkbook = ActiveWorkbook
+
+    Dim savedScreenUpdating As Boolean
+    Dim savedEnableEvents As Boolean
+    Dim savedDisplayAlerts As Boolean
+    savedScreenUpdating = Application.ScreenUpdating
+    savedEnableEvents = Application.EnableEvents
+    savedDisplayAlerts = Application.DisplayAlerts
+
+    Dim captured As Object
+    Dim needRestore As Boolean
+    needRestore = False
+
+    On Error GoTo EH
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+
+    Set captured = modNoFillExport.CaptureInteriors(mTargetWb, sheetNames)
+    modNoFillExport.ApplyNoFill mTargetWb, captured
+    needRestore = True
+
+    ' 印刷対象のシートを選択状態にする
+    mTargetWb.Activate
+    Dim ws As Worksheet
+    For i = 1 To sheetNames.Count
+        Set ws = Nothing
+        On Error Resume Next
+        Set ws = mTargetWb.Worksheets(CStr(sheetNames(i)))
+        On Error GoTo EH
+        If ws Is Nothing Then
+            Err.Raise vbObjectError + 1100, , "印刷対象のシートが見つかりません: " & CStr(sheetNames(i))
+        End If
+        If i = 1 Then
+            ws.Select
+        Else
+            ws.Select Replace:=False
+        End If
+    Next i
+
+    If selCount > 1 Then
+        ActiveWindow.SelectedSheets.PrintOut
+    Else
+        If allPages Then
+            ws.PrintOut
+        Else
+            ws.PrintOut From:=f, To:=t
+        End If
+    End If
+
+CleanUp:
+    If needRestore Then
+        On Error Resume Next
+        modNoFillExport.RestoreInteriors mTargetWb, captured
+        On Error GoTo 0
+    End If
+
+    ' [FIX] ActiveSheet/ActiveWorkbookを元に戻す（副作用の最小化）
+    If Not savedActiveWorkbook Is Nothing Then
+        On Error Resume Next
+        savedActiveWorkbook.Activate
+        If Not savedActiveSheet Is Nothing Then
+            savedActiveSheet.Activate
+        End If
+        On Error GoTo 0
+    End If
+    Application.ScreenUpdating = savedScreenUpdating
+    Application.EnableEvents = savedEnableEvents
+    Application.DisplayAlerts = savedDisplayAlerts
+    Exit Sub
+
+EH:
+    Dim msg As String
+    msg = "印刷でエラーが発生しました。" & vbCrLf & _
+          "エラー番号: " & Err.Number & vbCrLf & _
+          "内容: " & Err.Description
+    MsgBox msg, vbExclamation
+    Resume CleanUp
 End Sub
 
 '---------------------- 内部処理 ------------------------------

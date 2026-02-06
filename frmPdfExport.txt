@@ -124,6 +124,9 @@ Private Sub UserForm_Initialize()
     last = GetSetting("PdfExport", "Settings", "OutDir", "")
     If Len(last) = 0 Then last = Environ$("USERPROFILE") & "\Desktop"
     Me.Controls("txtOutDir").Text = last
+    
+    ' === プリセット機能の初期化（コントロールが存在する場合のみ） ===
+    Call InitializePresetControls
 End Sub
 
 Private Sub cmdRefresh_Click()
@@ -731,4 +734,377 @@ Private Function ControlExists(frm As Object, ctrlName As String) As Boolean
     ControlExists = (Err.Number = 0 And Not tmp Is Nothing)
     Err.Clear
     On Error GoTo 0
+End Function
+
+'============================================================
+' プリセット機能（シート選択状態の保存・復元）
+' 保存場所: ThisWorkbook 内の非表示シート「_Presets」
+' 形式: 1行＝1プリセット、1列目=プリセット名、2列目以降=シート名
+'============================================================
+
+Private Const PRESET_SHEET_NAME As String = "_Presets"
+
+'----------------------------------------
+' UserForm 初期化時にプリセット関連コントロールを初期化
+' ※既存の UserForm_Initialize の末尾から呼び出す想定
+'----------------------------------------
+Public Sub InitializePresetControls()
+    ' プリセット用コントロールの存在確認（オプショナル）
+    If Not ControlExists(Me, "cmbPresetList") Then Exit Sub
+    If Not ControlExists(Me, "txtPresetName") Then Exit Sub
+    If Not ControlExists(Me, "cmdSavePreset") Then Exit Sub
+    If Not ControlExists(Me, "cmdDeletePreset") Then Exit Sub
+    If Not ControlExists(Me, "cmdClearSelection") Then Exit Sub
+    
+    ' プリセット一覧を読み込み
+    Call LoadPresetList
+End Sub
+
+'----------------------------------------
+' ComboBox（プリセットリスト）の Change イベント
+' 選択された瞬間にシート選択状態を自動で切り替える
+'----------------------------------------
+Private Sub cmbPresetList_Change()
+    Dim presetName As String
+    presetName = Trim$(Me.Controls("cmbPresetList").Value)
+    
+    ' 空選択の場合は何もしない
+    If Len(presetName) = 0 Then Exit Sub
+    
+    ' プリセットを適用
+    Call ApplyPreset(presetName)
+End Sub
+
+'----------------------------------------
+' 保存ボタンクリック
+' 現在の lstSheets の選択状態をプリセットとして保存
+'----------------------------------------
+Private Sub cmdSavePreset_Click()
+    Dim presetName As String
+    presetName = Trim$(Me.Controls("txtPresetName").Text)
+    
+    ' プリセット名が空の場合はエラー
+    If Len(presetName) = 0 Then
+        MsgBox "プリセット名を入力してください。", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 選択されているシートがない場合はエラー
+    Dim selCount As Long
+    selCount = GetSelectedSheetCount()
+    If selCount = 0 Then
+        MsgBox "保存するシートが選択されていません。" & vbCrLf & _
+               "シートを1つ以上選択してから保存してください。", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 同名プリセットが存在する場合は上書き確認
+    If PresetExists(presetName) Then
+        Dim ans As VbMsgBoxResult
+        ans = MsgBox("プリセット「" & presetName & "」は既に存在します。" & vbCrLf & _
+                     "上書きしますか？", vbYesNo + vbQuestion)
+        If ans <> vbYes Then Exit Sub
+    End If
+    
+    ' 保存実行
+    Call SavePreset(presetName)
+    
+    ' ComboBox を再読込
+    Call LoadPresetList
+    
+    ' 保存したプリセットを選択状態にする
+    Me.Controls("cmbPresetList").Value = presetName
+    
+    MsgBox "プリセット「" & presetName & "」を保存しました。", vbInformation
+End Sub
+
+'----------------------------------------
+' 削除ボタンクリック
+' ComboBox で選択されているプリセットを削除
+'----------------------------------------
+Private Sub cmdDeletePreset_Click()
+    Dim presetName As String
+    presetName = Trim$(Me.Controls("cmbPresetList").Value)
+    
+    ' プリセットが選択されていない場合はエラー
+    If Len(presetName) = 0 Then
+        MsgBox "削除するプリセットを選択してください。", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 削除確認
+    Dim ans As VbMsgBoxResult
+    ans = MsgBox("プリセット「" & presetName & "」を削除しますか？", vbYesNo + vbQuestion)
+    If ans <> vbYes Then Exit Sub
+    
+    ' 削除実行
+    Call DeletePreset(presetName)
+    
+    ' ComboBox を再読込
+    Call LoadPresetList
+    
+    ' 入力欄もクリア
+    Me.Controls("txtPresetName").Text = ""
+    
+    MsgBox "プリセット「" & presetName & "」を削除しました。", vbInformation
+End Sub
+
+'----------------------------------------
+' 選択クリアボタンクリック
+' lstSheets の選択状態をすべて解除
+'----------------------------------------
+Private Sub cmdClearSelection_Click()
+    Call ClearSheetSelection
+End Sub
+
+'----------------------------------------
+' シート選択をすべて解除する
+'----------------------------------------
+Private Sub ClearSheetSelection()
+    Dim lstSheets As MSForms.ListBox
+    Dim i As Long
+    
+    Set lstSheets = Me.Controls("lstSheets")
+    
+    For i = 0 To lstSheets.ListCount - 1
+        lstSheets.Selected(i) = False
+    Next i
+    
+    ' UI更新
+    Call OnSheetSelectionChanged
+End Sub
+
+'----------------------------------------
+' プリセット一覧を ComboBox に読み込む
+'----------------------------------------
+Private Sub LoadPresetList()
+    Dim cmbPresetList As MSForms.ComboBox
+    Dim wsPreset As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    
+    Set cmbPresetList = Me.Controls("cmbPresetList")
+    cmbPresetList.Clear
+    
+    ' プリセットシートを取得（存在しない場合は終了）
+    Set wsPreset = GetOrCreatePresetSheet(createIfNotExists:=False)
+    If wsPreset Is Nothing Then Exit Sub
+    
+    ' 最終行を取得
+    lastRow = wsPreset.Cells(wsPreset.Rows.Count, 1).End(xlUp).Row
+    If lastRow < 1 Then Exit Sub
+    
+    ' プリセット名をComboBoxに追加
+    For i = 1 To lastRow
+        Dim presetName As String
+        presetName = Trim$(CStr(wsPreset.Cells(i, 1).Value))
+        If Len(presetName) > 0 Then
+            cmbPresetList.AddItem presetName
+        End If
+    Next i
+End Sub
+
+'----------------------------------------
+' プリセットを適用（シート選択状態を復元）
+' 手順:
+'   1. すべての選択を解除
+'   2. 保存されているシート名のうち、現在存在するシートだけを選択
+'   3. 存在しないシート名はスキップ（エラーにしない）
+'----------------------------------------
+Private Sub ApplyPreset(ByVal presetName As String)
+    Dim wsPreset As Worksheet
+    Dim lstSheets As MSForms.ListBox
+    Dim presetRow As Long
+    Dim colIndex As Long
+    Dim sheetName As String
+    Dim i As Long
+    
+    ' プリセットシートを取得
+    Set wsPreset = GetOrCreatePresetSheet(createIfNotExists:=False)
+    If wsPreset Is Nothing Then Exit Sub
+    
+    ' プリセット名から行番号を取得
+    presetRow = FindPresetRow(wsPreset, presetName)
+    If presetRow = 0 Then Exit Sub
+    
+    Set lstSheets = Me.Controls("lstSheets")
+    
+    ' 1. すべての選択を解除
+    For i = 0 To lstSheets.ListCount - 1
+        lstSheets.Selected(i) = False
+    Next i
+    
+    ' 2. 保存されているシート名を選択（存在するもののみ）
+    colIndex = 2  ' シート名は2列目から
+    Do
+        sheetName = Trim$(CStr(wsPreset.Cells(presetRow, colIndex).Value))
+        If Len(sheetName) = 0 Then Exit Do  ' 空セルで終了
+        
+        ' lstSheets 内でシート名を探して選択
+        For i = 0 To lstSheets.ListCount - 1
+            If StrComp(lstSheets.List(i), sheetName, vbTextCompare) = 0 Then
+                lstSheets.Selected(i) = True
+                Exit For
+            End If
+        Next i
+        ' 存在しないシート名はスキップ（エラーにしない）
+        
+        colIndex = colIndex + 1
+    Loop
+    
+    ' UI更新
+    Call OnSheetSelectionChanged
+End Sub
+
+'----------------------------------------
+' プリセットを保存
+' 現在の lstSheets で選択されているシート名を保存
+'----------------------------------------
+Private Sub SavePreset(ByVal presetName As String)
+    Dim wsPreset As Worksheet
+    Dim lstSheets As MSForms.ListBox
+    Dim presetRow As Long
+    Dim colIndex As Long
+    Dim i As Long
+    Dim lastCol As Long
+    
+    ' プリセットシートを取得（なければ作成）
+    Set wsPreset = GetOrCreatePresetSheet(createIfNotExists:=True)
+    If wsPreset Is Nothing Then
+        MsgBox "プリセット保存用シートの作成に失敗しました。", vbCritical
+        Exit Sub
+    End If
+    
+    Set lstSheets = Me.Controls("lstSheets")
+    
+    ' 既存プリセットの行を検索
+    presetRow = FindPresetRow(wsPreset, presetName)
+    
+    If presetRow = 0 Then
+        ' 新規追加：最終行+1
+        presetRow = wsPreset.Cells(wsPreset.Rows.Count, 1).End(xlUp).Row + 1
+        If wsPreset.Cells(1, 1).Value = "" Then presetRow = 1  ' 空シートの場合
+    Else
+        ' 既存行をクリア（プリセット名以外）
+        lastCol = wsPreset.Cells(presetRow, wsPreset.Columns.Count).End(xlToLeft).Column
+        If lastCol >= 2 Then
+            wsPreset.Range(wsPreset.Cells(presetRow, 2), wsPreset.Cells(presetRow, lastCol)).ClearContents
+        End If
+    End If
+    
+    ' プリセット名を1列目に書き込み
+    wsPreset.Cells(presetRow, 1).Value = presetName
+    
+    ' 選択されているシート名を2列目以降に書き込み
+    colIndex = 2
+    For i = 0 To lstSheets.ListCount - 1
+        If lstSheets.Selected(i) Then
+            wsPreset.Cells(presetRow, colIndex).Value = lstSheets.List(i)
+            colIndex = colIndex + 1
+        End If
+    Next i
+End Sub
+
+'----------------------------------------
+' プリセットを削除
+'----------------------------------------
+Private Sub DeletePreset(ByVal presetName As String)
+    Dim wsPreset As Worksheet
+    Dim presetRow As Long
+    
+    ' プリセットシートを取得
+    Set wsPreset = GetOrCreatePresetSheet(createIfNotExists:=False)
+    If wsPreset Is Nothing Then Exit Sub
+    
+    ' プリセット名から行番号を取得
+    presetRow = FindPresetRow(wsPreset, presetName)
+    If presetRow = 0 Then Exit Sub
+    
+    ' 行を削除
+    wsPreset.Rows(presetRow).Delete
+End Sub
+
+'----------------------------------------
+' プリセットが存在するかチェック
+'----------------------------------------
+Private Function PresetExists(ByVal presetName As String) As Boolean
+    Dim wsPreset As Worksheet
+    
+    Set wsPreset = GetOrCreatePresetSheet(createIfNotExists:=False)
+    If wsPreset Is Nothing Then
+        PresetExists = False
+        Exit Function
+    End If
+    
+    PresetExists = (FindPresetRow(wsPreset, presetName) > 0)
+End Function
+
+'----------------------------------------
+' プリセット名から行番号を取得（見つからない場合は0）
+'----------------------------------------
+Private Function FindPresetRow(ByVal wsPreset As Worksheet, ByVal presetName As String) As Long
+    Dim lastRow As Long
+    Dim i As Long
+    
+    lastRow = wsPreset.Cells(wsPreset.Rows.Count, 1).End(xlUp).Row
+    
+    For i = 1 To lastRow
+        If StrComp(Trim$(CStr(wsPreset.Cells(i, 1).Value)), presetName, vbTextCompare) = 0 Then
+            FindPresetRow = i
+            Exit Function
+        End If
+    Next i
+    
+    FindPresetRow = 0
+End Function
+
+'----------------------------------------
+' プリセット保存用シートを取得または作成
+' createIfNotExists: True の場合、シートが存在しなければ作成
+' ※ mTargetWb（出力対象ブック）内に作成する
+'----------------------------------------
+Private Function GetOrCreatePresetSheet(ByVal createIfNotExists As Boolean) As Worksheet
+    Dim ws As Worksheet
+    
+    ' 対象ブックが無効な場合は終了
+    If mTargetWb Is Nothing Then
+        Set GetOrCreatePresetSheet = Nothing
+        Exit Function
+    End If
+    
+    ' 既存シートを検索
+    On Error Resume Next
+    Set ws = mTargetWb.Worksheets(PRESET_SHEET_NAME)
+    On Error GoTo 0
+    
+    If Not ws Is Nothing Then
+        Set GetOrCreatePresetSheet = ws
+        Exit Function
+    End If
+    
+    ' シートが存在しない場合
+    If Not createIfNotExists Then
+        Set GetOrCreatePresetSheet = Nothing
+        Exit Function
+    End If
+    
+    ' 新規作成
+    On Error GoTo ErrHandler
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    
+    Set ws = mTargetWb.Worksheets.Add(After:=mTargetWb.Worksheets(mTargetWb.Worksheets.Count))
+    ws.Name = PRESET_SHEET_NAME
+    ws.Visible = xlSheetVeryHidden  ' 非表示（VBAからのみアクセス可能）
+    
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    
+    Set GetOrCreatePresetSheet = ws
+    Exit Function
+    
+ErrHandler:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    Set GetOrCreatePresetSheet = Nothing
 End Function

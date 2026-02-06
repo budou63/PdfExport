@@ -1,15 +1,11 @@
 Option Explicit
-
+Private Const PRESET_SHEET_NAME As String = "_Presets"
 ' 出力対象ブック（アドイン化対応：ActiveWorkbook依存を排除）
 Private mTargetWb As Workbook
 
 ' 出力対象ブックを設定（modPdfExportから呼ばれる）
 Public Sub SetTargetWorkbook(ByVal wb As Workbook)
     Set mTargetWb = wb
-End Sub
-
-Private Sub LabelFileName_Click()
-
 End Sub
 
 '============================================================
@@ -473,7 +469,7 @@ Private Sub cmdPrint_Click()
     ' 印刷対象のシートを選択状態にする
     mTargetWb.Activate
     Dim ws As Worksheet
-    For i = 1 To sheetNames.Count
+    For i = 1 To sheetNames.count
         Set ws = Nothing
         On Error Resume Next
         Set ws = mTargetWb.Worksheets(CStr(sheetNames(i)))
@@ -489,7 +485,7 @@ Private Sub cmdPrint_Click()
     Next i
 
     If selCount > 1 Then
-        ActiveWindow.SelectedSheets.PrintOut
+        ActiveWindow.selectedSheets.PrintOut
     Else
         If allPages Then
             ws.PrintOut
@@ -612,8 +608,8 @@ Private Function 推定ページ数_内部(ByVal ws As Worksheet) As Long
 
     On Error Resume Next
     ws.Activate
-    h = ws.HPageBreaks.Count + 1
-    v = ws.VPageBreaks.Count + 1
+    h = ws.HPageBreaks.count + 1
+    v = ws.VPageBreaks.count + 1
     推定ページ数_内部 = h * v
     On Error GoTo 0
 
@@ -742,7 +738,7 @@ End Function
 ' 形式: 1行＝1プリセット、1列目=プリセット名、2列目以降=シート名
 '============================================================
 
-Private Const PRESET_SHEET_NAME As String = "_Presets"
+
 
 '----------------------------------------
 ' UserForm 初期化時にプリセット関連コントロールを初期化
@@ -891,7 +887,7 @@ Private Sub LoadPresetList()
     If wsPreset Is Nothing Then Exit Sub
     
     ' 最終行を取得
-    lastRow = wsPreset.Cells(wsPreset.Rows.Count, 1).End(xlUp).Row
+    lastRow = wsPreset.Cells(wsPreset.Rows.count, 1).End(xlUp).Row
     If lastRow < 1 Then Exit Sub
     
     ' プリセット名をComboBoxに追加
@@ -982,11 +978,11 @@ Private Sub SavePreset(ByVal presetName As String)
     
     If presetRow = 0 Then
         ' 新規追加：最終行+1
-        presetRow = wsPreset.Cells(wsPreset.Rows.Count, 1).End(xlUp).Row + 1
+        presetRow = wsPreset.Cells(wsPreset.Rows.count, 1).End(xlUp).Row + 1
         If wsPreset.Cells(1, 1).Value = "" Then presetRow = 1  ' 空シートの場合
     Else
         ' 既存行をクリア（プリセット名以外）
-        lastCol = wsPreset.Cells(presetRow, wsPreset.Columns.Count).End(xlToLeft).Column
+        lastCol = wsPreset.Cells(presetRow, wsPreset.Columns.count).End(xlToLeft).Column
         If lastCol >= 2 Then
             wsPreset.Range(wsPreset.Cells(presetRow, 2), wsPreset.Cells(presetRow, lastCol)).ClearContents
         End If
@@ -1046,7 +1042,7 @@ Private Function FindPresetRow(ByVal wsPreset As Worksheet, ByVal presetName As 
     Dim lastRow As Long
     Dim i As Long
     
-    lastRow = wsPreset.Cells(wsPreset.Rows.Count, 1).End(xlUp).Row
+    lastRow = wsPreset.Cells(wsPreset.Rows.count, 1).End(xlUp).Row
     
     For i = 1 To lastRow
         If StrComp(Trim$(CStr(wsPreset.Cells(i, 1).Value)), presetName, vbTextCompare) = 0 Then
@@ -1093,7 +1089,7 @@ Private Function GetOrCreatePresetSheet(ByVal createIfNotExists As Boolean) As W
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
-    Set ws = mTargetWb.Worksheets.Add(After:=mTargetWb.Worksheets(mTargetWb.Worksheets.Count))
+    Set ws = mTargetWb.Worksheets.Add(After:=mTargetWb.Worksheets(mTargetWb.Worksheets.count))
     ws.Name = PRESET_SHEET_NAME
     ws.Visible = xlSheetVeryHidden  ' 非表示（VBAからのみアクセス可能）
     
@@ -1108,3 +1104,4 @@ ErrHandler:
     Application.ScreenUpdating = True
     Set GetOrCreatePresetSheet = Nothing
 End Function
+

@@ -279,34 +279,27 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
     Application.DisplayAlerts = False
     Application.Calculation = xlCalculationManual
 
-    ' [FIX] 最初のシートをコピーして新規ブックを生成（targetWbから）
-    Set ws = シート取得(sheetNames(LBound(sheetNames)), wb)
-    If ws Is Nothing Then
-        Err.Raise vbObjectError + 1004, , "最初のシートが見つかりません: " & sheetNames(LBound(sheetNames))
-    End If
-    
-    ws.Copy
-    Set wbNew = ActiveWorkbook
-    Set wsNew = wbNew.Worksheets(1)
-    
-    ' 最初のシートの値貼り付け処理
-    Set valueRange = GetValueConversionRange(wsNew)
-    If Not valueRange Is Nothing Then
-        valueRange.Value = valueRange.Value
-    End If
+    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
+    Set wbNew = Workbooks.Add(xlWBATWorksheet)
 
-    ' 2枚目以降のシートをコピーして新規ブックに追加（targetWbから）
-    For i = LBound(sheetNames) + 1 To UBound(sheetNames)
+    For i = LBound(sheetNames) To UBound(sheetNames)
         Set ws = シート取得(sheetNames(i), wb)
-        If Not ws Is Nothing Then
-            ws.Copy After:=wbNew.Worksheets(wbNew.Worksheets.Count)
-            Set wsNew = wbNew.Worksheets(wbNew.Worksheets.Count)
-            
-            ' 値貼り付け処理（関数を潰す）
-            Set valueRange = GetValueConversionRange(wsNew)
-            If Not valueRange Is Nothing Then
-                valueRange.Value = valueRange.Value
-            End If
+        If ws Is Nothing Then
+            Err.Raise vbObjectError + 1004, , "シートが見つかりません: " & sheetNames(i)
+        End If
+
+        If i = LBound(sheetNames) Then
+            Set wsNew = wbNew.Worksheets(1)
+        Else
+            Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
+        End If
+
+        Call CopyWorksheetContentWithoutCode(ws, wsNew)
+
+        ' 値貼り付け処理（関数を潰す）
+        Set valueRange = GetValueConversionRange(wsNew)
+        If Not valueRange Is Nothing Then
+            valueRange.Value = valueRange.Value
         End If
     Next i
 
@@ -416,10 +409,10 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
     Dim wsNew As Worksheet
     Dim valueRange As Range
 
-    ' [FIX] targetWb内のシートをコピー
-    ws.Copy
-    Set wbNew = ActiveWorkbook
+    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
+    Set wbNew = Workbooks.Add(xlWBATWorksheet)
     Set wsNew = wbNew.Worksheets(1)
+    Call CopyWorksheetContentWithoutCode(ws, wsNew)
 
     Set valueRange = GetValueConversionRange(wsNew)
     If Not valueRange Is Nothing Then
@@ -520,10 +513,10 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
     Dim wbNew As Workbook
     Dim wsNew As Worksheet
 
-    ' [FIX] targetWb内のシートをコピー（数式保持のため値貼り付け処理は行わない）
-    ws.Copy
-    Set wbNew = ActiveWorkbook
+    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
+    Set wbNew = Workbooks.Add(xlWBATWorksheet)
     Set wsNew = wbNew.Worksheets(1)
+    Call CopyWorksheetContentWithoutCode(ws, wsNew)
 
     ' 値貼り付け処理は行わない（数式・関数を保持）
     
@@ -621,27 +614,23 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
     Application.DisplayAlerts = False
     Application.Calculation = xlCalculationManual
 
-    ' [FIX] 最初のシートをコピーして新規ブックを生成（targetWbから）
-    Set ws = シート取得(sheetNames(LBound(sheetNames)), wb)
-    If ws Is Nothing Then
-        Err.Raise vbObjectError + 1004, , "最初のシートが見つかりません: " & sheetNames(LBound(sheetNames))
-    End If
-    
-    ws.Copy
-    Set wbNew = ActiveWorkbook
-    Set wsNew = wbNew.Worksheets(1)
-    
-    ' 値貼り付け処理は行わない（数式・関数を保持）
+    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
+    Set wbNew = Workbooks.Add(xlWBATWorksheet)
 
-    ' 2枚目以降のシートをコピーして新規ブックに追加（targetWbから）
-    For i = LBound(sheetNames) + 1 To UBound(sheetNames)
+    For i = LBound(sheetNames) To UBound(sheetNames)
         Set ws = シート取得(sheetNames(i), wb)
-        If Not ws Is Nothing Then
-            ws.Copy After:=wbNew.Worksheets(wbNew.Worksheets.Count)
-            Set wsNew = wbNew.Worksheets(wbNew.Worksheets.Count)
-            
-            ' 値貼り付け処理は行わない（数式・関数を保持）
+        If ws Is Nothing Then
+            Err.Raise vbObjectError + 1004, , "シートが見つかりません: " & sheetNames(i)
         End If
+
+        If i = LBound(sheetNames) Then
+            Set wsNew = wbNew.Worksheets(1)
+        Else
+            Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
+        End If
+
+        Call CopyWorksheetContentWithoutCode(ws, wsNew)
+        ' 値貼り付け処理は行わない（数式・関数を保持）
     Next i
 
     ' 【追加】外部参照を内部参照に正規化（元ブックを指す外部参照のみ）
@@ -677,6 +666,106 @@ CleanUp:
     End If
 End Sub
 
+
+' シートモジュールをコピーせず、表示内容・書式・印刷設定だけをxlsx用シートへ転記する
+Private Sub CopyWorksheetContentWithoutCode(ByVal sourceWs As Worksheet, ByVal targetWs As Worksheet)
+    If sourceWs Is Nothing Then Exit Sub
+    If targetWs Is Nothing Then Exit Sub
+
+    Dim usedRng As Range
+    Dim rowIndex As Long
+
+    targetWs.Cells.Clear
+    SetWorksheetNameUnique targetWs, sourceWs.Name
+
+    sourceWs.Cells.Copy
+    targetWs.Cells.PasteSpecial Paste:=xlPasteAll
+    targetWs.Cells.PasteSpecial Paste:=xlPasteColumnWidths
+    Application.CutCopyMode = False
+
+    On Error Resume Next
+    Set usedRng = sourceWs.UsedRange
+    If Not usedRng Is Nothing Then
+        For rowIndex = 1 To usedRng.Rows.Count
+            targetWs.Rows(usedRng.Row + rowIndex - 1).RowHeight = sourceWs.Rows(usedRng.Row + rowIndex - 1).RowHeight
+        Next rowIndex
+    End If
+
+    targetWs.Tab.Color = sourceWs.Tab.Color
+    targetWs.DisplayPageBreaks = sourceWs.DisplayPageBreaks
+    targetWs.PageSetup.PrintArea = sourceWs.PageSetup.PrintArea
+    targetWs.PageSetup.PrintTitleRows = sourceWs.PageSetup.PrintTitleRows
+    targetWs.PageSetup.PrintTitleColumns = sourceWs.PageSetup.PrintTitleColumns
+    targetWs.PageSetup.Orientation = sourceWs.PageSetup.Orientation
+    targetWs.PageSetup.PaperSize = sourceWs.PageSetup.PaperSize
+    targetWs.PageSetup.Zoom = sourceWs.PageSetup.Zoom
+    targetWs.PageSetup.FitToPagesWide = sourceWs.PageSetup.FitToPagesWide
+    targetWs.PageSetup.FitToPagesTall = sourceWs.PageSetup.FitToPagesTall
+    targetWs.PageSetup.LeftMargin = sourceWs.PageSetup.LeftMargin
+    targetWs.PageSetup.RightMargin = sourceWs.PageSetup.RightMargin
+    targetWs.PageSetup.TopMargin = sourceWs.PageSetup.TopMargin
+    targetWs.PageSetup.BottomMargin = sourceWs.PageSetup.BottomMargin
+    targetWs.PageSetup.HeaderMargin = sourceWs.PageSetup.HeaderMargin
+    targetWs.PageSetup.FooterMargin = sourceWs.PageSetup.FooterMargin
+    targetWs.PageSetup.CenterHorizontally = sourceWs.PageSetup.CenterHorizontally
+    targetWs.PageSetup.CenterVertically = sourceWs.PageSetup.CenterVertically
+    targetWs.PageSetup.LeftHeader = sourceWs.PageSetup.LeftHeader
+    targetWs.PageSetup.CenterHeader = sourceWs.PageSetup.CenterHeader
+    targetWs.PageSetup.RightHeader = sourceWs.PageSetup.RightHeader
+    targetWs.PageSetup.LeftFooter = sourceWs.PageSetup.LeftFooter
+    targetWs.PageSetup.CenterFooter = sourceWs.PageSetup.CenterFooter
+    targetWs.PageSetup.RightFooter = sourceWs.PageSetup.RightFooter
+    On Error GoTo 0
+End Sub
+
+' コピー先ブック内で重複しない安全なシート名を設定する
+Private Sub SetWorksheetNameUnique(ByVal ws As Worksheet, ByVal desiredName As String)
+    If ws Is Nothing Then Exit Sub
+
+    Dim baseName As String
+    Dim candidate As String
+    Dim counter As Long
+
+    baseName = SanitizeWorksheetName(desiredName)
+    If Len(baseName) = 0 Then baseName = "Sheet"
+    If Len(baseName) > 31 Then baseName = Left$(baseName, 31)
+
+    candidate = baseName
+    counter = 1
+    Do While WorksheetNameExists(ws.Parent, candidate, ws)
+        counter = counter + 1
+        candidate = Left$(baseName, 31 - Len("_" & CStr(counter))) & "_" & CStr(counter)
+    Loop
+
+    ws.Name = candidate
+End Sub
+
+Private Function SanitizeWorksheetName(ByVal sheetName As String) As String
+    Dim result As String
+    result = Trim$(sheetName)
+    result = Replace(result, "\", "_")
+    result = Replace(result, "/", "_")
+    result = Replace(result, "?", "_")
+    result = Replace(result, "*", "_")
+    result = Replace(result, "[", "_")
+    result = Replace(result, "]", "_")
+    result = Replace(result, ":", "_")
+    SanitizeWorksheetName = result
+End Function
+
+Private Function WorksheetNameExists(ByVal wb As Workbook, ByVal sheetName As String, ByVal ignoreWs As Worksheet) As Boolean
+    Dim ws As Worksheet
+    For Each ws In wb.Worksheets
+        If Not ignoreWs Is Nothing Then
+            If ws Is ignoreWs Then GoTo NextSheet
+        End If
+        If StrComp(ws.Name, sheetName, vbTextCompare) = 0 Then
+            WorksheetNameExists = True
+            Exit Function
+        End If
+NextSheet:
+    Next ws
+End Function
 
 '---------------------- 補助関数 ----------------------------
 

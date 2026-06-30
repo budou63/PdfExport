@@ -30,8 +30,8 @@ Application.DisplayAlerts = False
 Application.Calculation = xlCalculationManual
 ```
 
-対象範囲は、最初の `ws.Copy`、2枚目以降のシートコピー、コピー先での値貼り付け、外部参照の正規化、シート名変更等の出力後処理、`xlOpenXMLWorkbook` 形式での `SaveAs`、一時ブックの `Close` までです。
-保存・終了が完了する前に `EnableEvents` を戻さないことで、コピー先シートに含まれるイベントマクロを実行せず、マクロなし `.xlsx` として安全に出力します。
+対象範囲は、空の新規ブック作成、最初のシート転記、2枚目以降のシート転記、コピー先での値貼り付け、外部参照の正規化、シート名変更等の出力後処理、`xlOpenXMLWorkbook` 形式での `SaveAs`、一時ブックの `Close` までです。
+保存・終了が完了する前に `EnableEvents` を戻さないことに加えて、Excel出力では `ws.Copy` を使わず、空の新規ブックへセル内容・書式・印刷設定を転記します。これにより、元シートのシートモジュール（例: `Worksheet_Change`）をコピー先ブックへ持ち込まず、`RYOHI_REASON_CELL` のような元ブック側の標準モジュール定数に依存するコードが `.xlsx` 保存時にコンパイルされることを防ぎます。
 
 ### 対象関数
 
@@ -46,7 +46,7 @@ Application.Calculation = xlCalculationManual
 
 ## 関数保持モードの注意点
 
-- VBAイベントやシートモジュール内マクロが、未出力のシート、元ブックの標準モジュールの `Public Const`、共通関数などへ依存している場合でも、出力中はイベントを停止することで出力エラーを防止します。
+- VBAイベントやシートモジュール内マクロが、未出力のシート、元ブックの標準モジュールの `Public Const`、共通関数などへ依存している場合でも、出力中はイベントを停止し、Excel出力先へシートモジュールをコピーしないことで出力エラーを防止します。
 - 関数保持モードでは、数式自体が未選択シートを参照している場合、参照切れや外部参照が残る可能性があります。今回の修正対象は、コピーされたシートモジュール内のVBAイベントやマクロ実行に起因する出力エラーの防止です。
 - 値貼り付けモードでは、出力時点の計算結果を値として保存します。
 
@@ -75,12 +75,13 @@ Application.Calculation = xlCalculationManual
 
 ## 変更履歴メモ
 
-- `modPdfExport.txt`: Excel出力4系統で Application 状態を保存・一時変更・復元する共通の終了処理を追加しました。複数シート出力ではエラー復元後に呼び出し側へ再送出します。
+- `modPdfExport.txt`: Excel出力4系統で Application 状態を保存・一時変更・復元する共通の終了処理を追加しました。さらにExcel出力では `ws.Copy` を使わず、空の新規ブックへ表示内容・書式・印刷設定だけを転記することで、コピー先 `.xlsx` にシートモジュールを持ち込まないようにしました。複数シート出力ではエラー復元後に呼び出し側へ再送出します。
 - `README.md`: イベント停止の目的、対象関数、関数保持モードの注意点、Excel実機での確認手順を追記しました。
 
 ## テスト結果
 
 - `rg -n "Application\.(EnableEvents|ScreenUpdating|DisplayAlerts|Calculation)|CleanUp:|Err\.Raise" modPdfExport.txt` により、対象処理の状態保存・停止・復元・再送出箇所を確認しました。
 - `rg -n "valueRange\.Value = valueRange\.Value" modPdfExport.txt` により、値貼り付け処理が維持されていることを確認しました。
+- `rg -n "ws\.Copy|CopyWorksheetContentWithoutCode|Workbooks\.Add\(xlWBATWorksheet\)" modPdfExport.txt` により、Excel出力がシートモジュールをコピーする `ws.Copy` ではなく、マクロなし転記用ヘルパーを使用していることを確認しました。
 - `git diff --check` により、差分に空白エラーがないことを確認しました。
 - Excel 実機がないため、上記18項目の実動作確認は未実施です。

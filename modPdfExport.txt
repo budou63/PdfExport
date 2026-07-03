@@ -230,7 +230,6 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
     Dim ws As Worksheet
     Dim wbNew As Workbook
     Dim wsNew As Worksheet
-    Dim valueRange As Range
     Dim outDir As String
     Dim baseName As String
     Dim fn As String
@@ -295,12 +294,7 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
         End If
 
         Call CopyWorksheetContentWithoutCode(ws, wsNew)
-
-        ' 値貼り付け処理（関数を潰す）
-        Set valueRange = GetValueConversionRange(wsNew)
-        If Not valueRange Is Nothing Then
-            valueRange.Value = valueRange.Value
-        End If
+        Call ConvertFormulasToSourceDisplayedValues(ws, wsNew)
     Next i
 
     ' 保存
@@ -407,17 +401,12 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
 
     Dim wbNew As Workbook
     Dim wsNew As Worksheet
-    Dim valueRange As Range
 
     ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
     Set wbNew = Workbooks.Add(xlWBATWorksheet)
     Set wsNew = wbNew.Worksheets(1)
     Call CopyWorksheetContentWithoutCode(ws, wsNew)
-
-    Set valueRange = GetValueConversionRange(wsNew)
-    If Not valueRange Is Nothing Then
-        valueRange.Value = valueRange.Value
-    End If
+    Call ConvertFormulasToSourceDisplayedValues(ws, wsNew)
 
     wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
     wbNew.Close SaveChanges:=False
@@ -666,6 +655,44 @@ CleanUp:
     End If
 End Sub
 
+
+' 通常Excel出力用: コピー先ではなく元シートの表示状態を基準に数式を値化する
+Private Sub ConvertFormulasToSourceDisplayedValues(ByVal sourceWs As Worksheet, ByVal targetWs As Worksheet)
+    If sourceWs Is Nothing Then Exit Sub
+    If targetWs Is Nothing Then Exit Sub
+
+    Dim rng As Range
+    Dim formulaRange As Range
+    Dim cell As Range
+    Dim dstCell As Range
+    Dim displayText As String
+
+    Set rng = GetValueConversionRange(sourceWs)
+    If rng Is Nothing Then Exit Sub
+
+    On Error Resume Next
+    Set formulaRange = rng.SpecialCells(xlCellTypeFormulas)
+    If Err.Number <> 0 Then
+        Err.Clear
+        Set formulaRange = Nothing
+    End If
+    On Error GoTo 0
+
+    If formulaRange Is Nothing Then Exit Sub
+
+    For Each cell In formulaRange.Cells
+        Set dstCell = targetWs.Range(cell.Address(False, False))
+        displayText = Trim$(CStr(cell.Text))
+
+        ' 元シートで空白に見える数式セルは、コピー先でも空白値として確定する
+        If displayText = "" Then
+            dstCell.ClearContents
+        Else
+            ' 表示有りの場合は、元シートで評価済みの値を入れて数式を残さない
+            dstCell.Value = cell.Value
+        End If
+    Next cell
+End Sub
 
 ' シートモジュールをコピーせず、表示内容・書式・印刷設定だけをxlsx用シートへ転記する
 Private Sub CopyWorksheetContentWithoutCode(ByVal sourceWs As Worksheet, ByVal targetWs As Worksheet)

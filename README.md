@@ -48,7 +48,7 @@ Application.Calculation = xlCalculationManual
 
 - VBAイベントやシートモジュール内マクロが、未出力のシート、元ブックの標準モジュールの `Public Const`、共通関数などへ依存している場合でも、出力中はイベントを停止し、Excel出力先へシートモジュールをコピーしないことで出力エラーを防止します。
 - 関数保持モードでは、数式自体が未選択シートを参照している場合、参照切れや外部参照が残る可能性があります。今回の修正対象は、コピーされたシートモジュール内のVBAイベントやマクロ実行に起因する出力エラーの防止です。
-- 値貼り付けモードでは、出力時点の計算結果を値として保存します。
+- 値貼り付けモードでは、コピー先シートで数式を再評価して一括値化せず、元シート側の表示状態を基準に数式セルを値化します。元シートで空白に見える数式セルは空白として保存し、表示されている文字列・数値は元シートの評価結果を値として保存します。
 
 ## 実機確認について
 
@@ -75,13 +75,14 @@ Application.Calculation = xlCalculationManual
 
 ## 変更履歴メモ
 
-- `modPdfExport.txt`: Excel出力4系統で Application 状態を保存・一時変更・復元する共通の終了処理を追加しました。さらにExcel出力では `ws.Copy` を使わず、空の新規ブックへ表示内容・書式・印刷設定だけを転記することで、コピー先 `.xlsx` にシートモジュールを持ち込まないようにしました。複数シート出力ではエラー復元後に呼び出し側へ再送出します。
+- `modPdfExport.txt`: Excel出力4系統で Application 状態を保存・一時変更・復元する共通の終了処理を追加しました。さらにExcel出力では `ws.Copy` を使わず、空の新規ブックへ表示内容・書式・印刷設定だけを転記することで、コピー先 `.xlsx` にシートモジュールを持ち込まないようにしました。通常Excel出力では `ConvertFormulasToSourceDisplayedValues` により、元シートで空白に見える数式セルを空白として確定します。複数シート出力ではエラー復元後に呼び出し側へ再送出します。
 - `README.md`: イベント停止の目的、対象関数、関数保持モードの注意点、Excel実機での確認手順を追記しました。
 
 ## テスト結果
 
 - `rg -n "Application\.(EnableEvents|ScreenUpdating|DisplayAlerts|Calculation)|CleanUp:|Err\.Raise" modPdfExport.txt` により、対象処理の状態保存・停止・復元・再送出箇所を確認しました。
-- `rg -n "valueRange\.Value = valueRange\.Value" modPdfExport.txt` により、値貼り付け処理が維持されていることを確認しました。
+- `rg -n "valueRange\.Value = valueRange\.Value" modPdfExport.txt; test $? -eq 1` により、通常Excel出力でコピー先シート側の一括評価・一括値化を行わないことを確認しました。
+- `rg -n "ConvertFormulasToSourceDisplayedValues" modPdfExport.txt` により、通常Excel出力が元シート側の表示状態を基準に数式セルを値化する専用処理を呼ぶことを確認しました。
 - `rg -n "ws\.Copy|CopyWorksheetContentWithoutCode|Workbooks\.Add\(xlWBATWorksheet\)" modPdfExport.txt` により、Excel出力がシートモジュールをコピーする `ws.Copy` ではなく、マクロなし転記用ヘルパーを使用していることを確認しました。
 - `git diff --check` により、差分に空白エラーがないことを確認しました。
 - Excel 実機がないため、上記18項目の実動作確認は未実施です。

@@ -218,6 +218,8 @@ End Sub
 ' 【修正】英数字のみの安定したエントリポイント（日本語名の揺れ/全角混入があっても呼び出しが壊れない）
 Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
+    On Error GoTo EH
+
     Dim wb As Workbook
     If targetWb Is Nothing Then
         Set wb = ActiveWorkbook
@@ -270,6 +272,10 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
     MsgBox "Excel出力が完了しました。" & vbCrLf & _
            "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
            fn, vbInformation
+    Exit Sub
+
+EH:
+    MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
 End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
@@ -388,6 +394,8 @@ End Sub
 ' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
 Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
+    On Error GoTo EH
+
     Dim wb As Workbook
     If targetWb Is Nothing Then
         Set wb = ActiveWorkbook
@@ -440,6 +448,10 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
     MsgBox "Excel出力（関数保持）が完了しました。" & vbCrLf & _
            "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
            fn, vbInformation
+    Exit Sub
+
+EH:
+    MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
 End Sub
 
 ' 元ブック全体の一時コピーを加工し、テンプレートの見た目を保ったままxlsxとして保存する

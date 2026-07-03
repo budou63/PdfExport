@@ -230,6 +230,19 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
     Dim outDir As String
     Dim baseName As String
     Dim fn As String
+    Dim savedEnableEvents As Boolean
+    Dim savedScreenUpdating As Boolean
+    Dim savedDisplayAlerts As Boolean
+    Dim savedCalculation As XlCalculation
+    Dim errNum As Long
+    Dim errDesc As String
+
+    savedEnableEvents = Application.EnableEvents
+    savedScreenUpdating = Application.ScreenUpdating
+    savedDisplayAlerts = Application.DisplayAlerts
+    savedCalculation = Application.Calculation
+
+    On Error GoTo EH
 
     For i = LBound(sheetNames) To UBound(sheetNames)
         Set ws = シート取得(sheetNames(i), wb)
@@ -303,6 +316,7 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
         baseName = 置換不可文字除去(RemoveExtension(baseName))
     End If
 
+    ' 同名ファイル上書き回避
     Dim fn As String
     fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
 
@@ -386,6 +400,19 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
     Dim outDir As String
     Dim baseName As String
     Dim fn As String
+    Dim savedEnableEvents As Boolean
+    Dim savedScreenUpdating As Boolean
+    Dim savedDisplayAlerts As Boolean
+    Dim savedCalculation As XlCalculation
+    Dim errNum As Long
+    Dim errDesc As String
+
+    savedEnableEvents = Application.EnableEvents
+    savedScreenUpdating = Application.ScreenUpdating
+    savedDisplayAlerts = Application.DisplayAlerts
+    savedCalculation = Application.Calculation
+
+    On Error GoTo EH
 
     For i = LBound(sheetNames) To UBound(sheetNames)
         Set ws = シート取得(sheetNames(i), wb)

@@ -146,14 +146,9 @@ Public Sub RestoreInteriors( _
         Dim info As Variant
         info = captured(key)
 
-        ' 復元は可能な範囲で実行（個別に失敗しても継続）
+        ' 復元は見た目の色を優先し、テーマ色や濃淡補正を再設定しない
         cell.Interior.Pattern = info(1)
         cell.Interior.Color = info(2)
-        cell.Interior.ColorIndex = info(3)
-        cell.Interior.TintAndShade = info(4)
-        cell.Interior.PatternColor = info(5)
-        cell.Interior.PatternColorIndex = info(6)
-        cell.Interior.PatternTintAndShade = info(7)
 NextKey:
     Next key
     On Error GoTo 0

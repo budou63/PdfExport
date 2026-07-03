@@ -218,7 +218,6 @@ End Sub
 ' 【修正】英数字のみの安定したエントリポイント（日本語名の揺れ/全角混入があっても呼び出しが壊れない）
 Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
-    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
     Dim wb As Workbook
     If targetWb Is Nothing Then
         Set wb = ActiveWorkbook
@@ -228,8 +227,6 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
 
     Dim i As Long
     Dim ws As Worksheet
-    Dim wbNew As Workbook
-    Dim wsNew As Worksheet
     Dim outDir As String
     Dim baseName As String
     Dim fn As String
@@ -247,7 +244,6 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
 
     On Error GoTo EH
 
-    ' [FIX] シート名の検証（targetWbを渡す）
     For i = LBound(sheetNames) To UBound(sheetNames)
         Set ws = シート取得(sheetNames(i), wb)
         If ws Is Nothing Then
@@ -255,14 +251,12 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
         End If
     Next i
 
-    ' [FIX] 出力先の解決（targetWbを渡す）
     outDir = 解決出力先(outDirUi, wb)
     If Len(outDir) = 0 Then
         Err.Raise vbObjectError + 1002, , "出力先フォルダが指定されていません。"
     End If
     フォルダ作成 outDir
 
-    ' ファイル名決定
     baseName = Trim$(fileNameUi)
     If Len(baseName) = 0 Then
         baseName = 置換不可文字除去("Export_" & Format(Now, "yyyymmdd_HHMMSS"))
@@ -270,68 +264,18 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
         baseName = 置換不可文字除去(RemoveExtension(baseName))
     End If
 
-    ' 同名ファイルが存在する場合は末尾に _001, _002... を付けて上書き回避
     fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
-
-    Application.EnableEvents = False
-    Application.ScreenUpdating = False
-    Application.DisplayAlerts = False
-    Application.Calculation = xlCalculationManual
-
-    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
-    Set wbNew = Workbooks.Add(xlWBATWorksheet)
-
-    For i = LBound(sheetNames) To UBound(sheetNames)
-        Set ws = シート取得(sheetNames(i), wb)
-        If ws Is Nothing Then
-            Err.Raise vbObjectError + 1004, , "シートが見つかりません: " & sheetNames(i)
-        End If
-
-        If i = LBound(sheetNames) Then
-            Set wsNew = wbNew.Worksheets(1)
-        Else
-            Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
-        End If
-
-        Call CopyWorksheetContentWithoutCode(ws, wsNew)
-        Call ConvertFormulasToSourceDisplayedValues(ws, wsNew)
-    Next i
-
-    ' 保存
-    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
-    wbNew.Close SaveChanges:=True
+    Call ExportWorkbookCopyAsXlsx(wb, sheetNames, fn, False)
 
     MsgBox "Excel出力が完了しました。" & vbCrLf & _
            "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
            fn, vbInformation
-    GoTo CleanUp
-
-EH:
-    errNum = Err.Number
-    errDesc = Err.Description
-
-    If Not wbNew Is Nothing Then
-        On Error Resume Next
-        wbNew.Close SaveChanges:=False
-        On Error GoTo 0
-    End If
-
-CleanUp:
-    Application.EnableEvents = savedEnableEvents
-    Application.ScreenUpdating = savedScreenUpdating
-    Application.DisplayAlerts = savedDisplayAlerts
-    Application.Calculation = savedCalculation
-
-    If errNum <> 0 Then
-        Err.Raise errNum, , errDesc
-    End If
 End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
 ' 【修正】日本語名のラッパー（後方互換性のため保持）
 ' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
 Public Sub Excel_複数シート出力実行(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
-    ' 英数字名のエントリポイントに委譲
     Call Excel_MultiSheetExport(sheetNames, outDirUi, fileNameUi, targetWb)
 End Sub
 
@@ -342,7 +286,6 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
                        ByVal fileNameUi As String, _
                        Optional ByVal targetWb As Workbook = Nothing)
 
-    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
     Dim wb As Workbook
     If targetWb Is Nothing Then
         Set wb = ActiveWorkbook
@@ -351,7 +294,6 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
     End If
 
     Dim ws As Worksheet
-    ' [FIX] シート取得にtargetWbを渡す
     Set ws = シート取得(sheetName, wb)
     If ws Is Nothing Then
         MsgBox "シートが見つかりません: " & sheetName, vbExclamation
@@ -359,7 +301,6 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
     End If
 
     Dim outDir As String
-    ' [FIX] 解決出力先にtargetWbを渡す
     outDir = 解決出力先(outDirUi, wb)
     If Len(outDir) = 0 Then
         MsgBox "出力先フォルダが指定されていません。", vbExclamation
@@ -367,7 +308,6 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
     End If
     フォルダ作成 outDir
 
-    '=== ファイル名決定 ===
     Dim baseName As String
     baseName = Trim$(fileNameUi)
     If Len(baseName) = 0 Then
@@ -380,59 +320,16 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
     Dim fn As String
     fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
 
-    Dim savedEnableEvents As Boolean
-    Dim savedScreenUpdating As Boolean
-    Dim savedDisplayAlerts As Boolean
-    Dim savedCalculation As XlCalculation
-    Dim errNum As Long
-    Dim errDesc As String
-
-    savedEnableEvents = Application.EnableEvents
-    savedScreenUpdating = Application.ScreenUpdating
-    savedDisplayAlerts = Application.DisplayAlerts
-    savedCalculation = Application.Calculation
+    Dim oneSheet(0 To 0) As String
+    oneSheet(0) = sheetName
 
     On Error GoTo EH
-
-    Application.EnableEvents = False
-    Application.ScreenUpdating = False
-    Application.DisplayAlerts = False
-    Application.Calculation = xlCalculationManual
-
-    Dim wbNew As Workbook
-    Dim wsNew As Worksheet
-
-    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
-    Set wbNew = Workbooks.Add(xlWBATWorksheet)
-    Set wsNew = wbNew.Worksheets(1)
-    Call CopyWorksheetContentWithoutCode(ws, wsNew)
-    Call ConvertFormulasToSourceDisplayedValues(ws, wsNew)
-
-    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
-    wbNew.Close SaveChanges:=False
-
+    Call ExportWorkbookCopyAsXlsx(wb, oneSheet, fn, False)
     MsgBox "Excel出力が完了しました。" & vbCrLf & fn, vbInformation
-    GoTo CleanUp
+    Exit Sub
 
 EH:
-    errNum = Err.Number
-    errDesc = Err.Description
-
-    If Not wbNew Is Nothing Then
-        On Error Resume Next
-        wbNew.Close SaveChanges:=False
-        On Error GoTo 0
-    End If
-
-CleanUp:
-    Application.EnableEvents = savedEnableEvents
-    Application.ScreenUpdating = savedScreenUpdating
-    Application.DisplayAlerts = savedDisplayAlerts
-    Application.Calculation = savedCalculation
-
-    If errNum <> 0 Then
-        MsgBox "Excel出力でエラー: " & errDesc, vbCritical
-    End If
+    MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
 End Sub
 
 ' 指定シートを Excel 形式（関数保持）で保存
@@ -442,7 +339,6 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
                                    ByVal fileNameUi As String, _
                                    Optional ByVal targetWb As Workbook = Nothing)
 
-    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
     Dim wb As Workbook
     If targetWb Is Nothing Then
         Set wb = ActiveWorkbook
@@ -451,7 +347,6 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
     End If
 
     Dim ws As Worksheet
-    ' [FIX] シート取得にtargetWbを渡す
     Set ws = シート取得(sheetName, wb)
     If ws Is Nothing Then
         MsgBox "シートが見つかりません: " & sheetName, vbExclamation
@@ -459,7 +354,6 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
     End If
 
     Dim outDir As String
-    ' [FIX] 解決出力先にtargetWbを渡す
     outDir = 解決出力先(outDirUi, wb)
     If Len(outDir) = 0 Then
         MsgBox "出力先フォルダが指定されていません。", vbExclamation
@@ -467,7 +361,6 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
     End If
     フォルダ作成 outDir
 
-    '=== ファイル名決定 ===
     Dim baseName As String
     baseName = Trim$(fileNameUi)
     If Len(baseName) = 0 Then
@@ -476,74 +369,25 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
         baseName = 置換不可文字除去(RemoveExtension(baseName))
     End If
 
-    ' 【修正】同名ファイル上書き回避を追加
     Dim fn As String
     fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
 
-    Dim savedEnableEvents As Boolean
-    Dim savedScreenUpdating As Boolean
-    Dim savedDisplayAlerts As Boolean
-    Dim savedCalculation As XlCalculation
-    Dim errNum As Long
-    Dim errDesc As String
-
-    savedEnableEvents = Application.EnableEvents
-    savedScreenUpdating = Application.ScreenUpdating
-    savedDisplayAlerts = Application.DisplayAlerts
-    savedCalculation = Application.Calculation
+    Dim oneSheet(0 To 0) As String
+    oneSheet(0) = sheetName
 
     On Error GoTo EH
-
-    Application.EnableEvents = False
-    Application.ScreenUpdating = False
-    Application.DisplayAlerts = False
-    Application.Calculation = xlCalculationManual
-
-    Dim wbNew As Workbook
-    Dim wsNew As Worksheet
-
-    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
-    Set wbNew = Workbooks.Add(xlWBATWorksheet)
-    Set wsNew = wbNew.Worksheets(1)
-    Call CopyWorksheetContentWithoutCode(ws, wsNew)
-
-    ' 値貼り付け処理は行わない（数式・関数を保持）
-    
-    ' 【追加】外部参照を内部参照に正規化（元ブックを指す外部参照のみ）
-    Call 正規化外部参照_関数保持(wbNew, wb.Name)
-
-    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
-    wbNew.Close SaveChanges:=False
-
+    Call ExportWorkbookCopyAsXlsx(wb, oneSheet, fn, True)
     MsgBox "Excel出力（関数保持）が完了しました。" & vbCrLf & fn, vbInformation
-    GoTo CleanUp
+    Exit Sub
 
 EH:
-    errNum = Err.Number
-    errDesc = Err.Description
-
-    If Not wbNew Is Nothing Then
-        On Error Resume Next
-        wbNew.Close SaveChanges:=False
-        On Error GoTo 0
-    End If
-
-CleanUp:
-    Application.EnableEvents = savedEnableEvents
-    Application.ScreenUpdating = savedScreenUpdating
-    Application.DisplayAlerts = savedDisplayAlerts
-    Application.Calculation = savedCalculation
-
-    If errNum <> 0 Then
-        MsgBox "Excel出力でエラー: " & errDesc, vbCritical
-    End If
+    MsgBox "Excel出力でエラー: " & Err.Number & vbCrLf & Err.Description, vbCritical
 End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（関数保持）
 ' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
 Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
-    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
     Dim wb As Workbook
     If targetWb Is Nothing Then
         Set wb = ActiveWorkbook
@@ -553,8 +397,6 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
 
     Dim i As Long
     Dim ws As Worksheet
-    Dim wbNew As Workbook
-    Dim wsNew As Worksheet
     Dim outDir As String
     Dim baseName As String
     Dim fn As String
@@ -572,7 +414,6 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
 
     On Error GoTo EH
 
-    ' [FIX] シート名の検証（targetWbを渡す）
     For i = LBound(sheetNames) To UBound(sheetNames)
         Set ws = シート取得(sheetNames(i), wb)
         If ws Is Nothing Then
@@ -580,14 +421,12 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
         End If
     Next i
 
-    ' [FIX] 出力先の解決（targetWbを渡す）
     outDir = 解決出力先(outDirUi, wb)
     If Len(outDir) = 0 Then
         Err.Raise vbObjectError + 1002, , "出力先フォルダが指定されていません。"
     End If
     フォルダ作成 outDir
 
-    ' ファイル名決定
     baseName = Trim$(fileNameUi)
     If Len(baseName) = 0 Then
         baseName = 置換不可文字除去("Export_" & Format(Now, "yyyymmdd_HHMMSS"))
@@ -595,79 +434,127 @@ Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As 
         baseName = 置換不可文字除去(RemoveExtension(baseName))
     End If
 
-    ' 同名ファイルが存在する場合は末尾に _001, _002... を付けて上書き回避
     fn = ユニークファイル名生成(outDir, baseName, ".xlsx")
+    Call ExportWorkbookCopyAsXlsx(wb, sheetNames, fn, True)
+
+    MsgBox "Excel出力（関数保持）が完了しました。" & vbCrLf & _
+           "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
+           fn, vbInformation
+End Sub
+
+' 元ブック全体の一時コピーを加工し、テンプレートの見た目を保ったままxlsxとして保存する
+Private Sub ExportWorkbookCopyAsXlsx(ByVal sourceWb As Workbook, ByRef sheetNames() As String, ByVal outputPath As String, ByVal keepFormulas As Boolean)
+    If sourceWb Is Nothing Then Err.Raise vbObjectError + 1101, , "出力対象ブックが見つかりません。"
+    If Len(outputPath) = 0 Then Err.Raise vbObjectError + 1102, , "出力先ファイルが指定されていません。"
+
+    Dim savedEnableEvents As Boolean
+    Dim savedScreenUpdating As Boolean
+    Dim savedDisplayAlerts As Boolean
+    Dim savedCalculation As XlCalculation
+    Dim errNum As Long
+    Dim errDesc As String
+    Dim tempPath As String
+    Dim wbTemp As Workbook
+    Dim ws As Worksheet
+    Dim targetWs As Worksheet
+    Dim i As Long
+
+    savedEnableEvents = Application.EnableEvents
+    savedScreenUpdating = Application.ScreenUpdating
+    savedDisplayAlerts = Application.DisplayAlerts
+    savedCalculation = Application.Calculation
+
+    On Error GoTo EH
 
     Application.EnableEvents = False
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     Application.Calculation = xlCalculationManual
 
-    ' シートモジュールをコピーしないため、空のxlsx用ブックへ表示内容だけを転記する
-    Set wbNew = Workbooks.Add(xlWBATWorksheet)
+    tempPath = CreateTempWorkbookCopyPath(sourceWb)
+    sourceWb.SaveCopyAs tempPath
 
+    Set wbTemp = Workbooks.Open(Filename:=tempPath, UpdateLinks:=0, ReadOnly:=False, AddToMru:=False)
+
+    ' 選択対象シートは必ず表示して、少なくとも1枚の表示シートを確保する
     For i = LBound(sheetNames) To UBound(sheetNames)
-        Set ws = シート取得(sheetNames(i), wb)
-        If ws Is Nothing Then
-            Err.Raise vbObjectError + 1004, , "シートが見つかりません: " & sheetNames(i)
+        Set targetWs = シート取得(sheetNames(i), wbTemp)
+        If targetWs Is Nothing Then
+            Err.Raise vbObjectError + 1103, , "一時ブック内にシートが見つかりません: " & sheetNames(i)
         End If
-
-        If i = LBound(sheetNames) Then
-            Set wsNew = wbNew.Worksheets(1)
-        Else
-            Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
-        End If
-
-        Call CopyWorksheetContentWithoutCode(ws, wsNew)
-        ' 値貼り付け処理は行わない（数式・関数を保持）
+        targetWs.Visible = xlSheetVisible
     Next i
 
-    ' 【追加】外部参照を内部参照に正規化（元ブックを指す外部参照のみ）
-    Call 正規化外部参照_関数保持(wbNew, wb.Name)
+    If keepFormulas Then
+        ' 関数保持版: 参照元シートを削除せずVeryHiddenで残す
+        For Each ws In wbTemp.Worksheets
+            If IsSheetNameSelected(ws.Name, sheetNames) Then
+                ws.Visible = xlSheetVisible
+            Else
+                ws.Visible = xlSheetVeryHidden
+            End If
+        Next ws
 
-    ' 保存
-    wbNew.SaveAs Filename:=fn, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
-    wbNew.Close SaveChanges:=True
+        Call 正規化外部参照_関数保持(wbTemp, sourceWb.Name)
+    Else
+        ' 確定版: 参照元が存在するうちに対象シートの数式だけを安全に値化する
+        For i = LBound(sheetNames) To UBound(sheetNames)
+            Set targetWs = シート取得(sheetNames(i), wbTemp)
+            If Not targetWs Is Nothing Then
+                targetWs.Visible = xlSheetVisible
+                Call ConvertSheetFormulasToValuesSafely(targetWs)
+            End If
+        Next i
 
-    MsgBox "Excel出力（関数保持）が完了しました。" & vbCrLf & _
-           "出力シート数: " & (UBound(sheetNames) - LBound(sheetNames) + 1) & "件" & vbCrLf & _
-           fn, vbInformation
-    GoTo CleanUp
-
-EH:
-    errNum = Err.Number
-    errDesc = Err.Description
-
-    If Not wbNew Is Nothing Then
-        On Error Resume Next
-        wbNew.Close SaveChanges:=False
-        On Error GoTo 0
+        ' 値化後に対象外シートを削除する
+        For i = wbTemp.Worksheets.Count To 1 Step -1
+            Set ws = wbTemp.Worksheets(i)
+            If Not IsSheetNameSelected(ws.Name, sheetNames) Then
+                ws.Delete
+            Else
+                ws.Visible = xlSheetVisible
+            End If
+        Next i
     End If
 
+    wbTemp.SaveAs Filename:=outputPath, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
+    wbTemp.Close SaveChanges:=False
+    Set wbTemp = Nothing
+
 CleanUp:
+    On Error Resume Next
+    If Not wbTemp Is Nothing Then wbTemp.Close SaveChanges:=False
+    If Len(tempPath) > 0 Then
+        If Dir(tempPath, vbNormal) <> "" Then Kill tempPath
+    End If
     Application.EnableEvents = savedEnableEvents
     Application.ScreenUpdating = savedScreenUpdating
     Application.DisplayAlerts = savedDisplayAlerts
     Application.Calculation = savedCalculation
+    On Error GoTo 0
 
     If errNum <> 0 Then
         Err.Raise errNum, , errDesc
     End If
+    Exit Sub
+
+EH:
+    errNum = Err.Number
+    errDesc = Err.Description
+    Resume CleanUp
 End Sub
 
-
-' 通常Excel出力用: コピー先ではなく元シートの表示状態を基準に数式を値化する
-Private Sub ConvertFormulasToSourceDisplayedValues(ByVal sourceWs As Worksheet, ByVal targetWs As Worksheet)
-    If sourceWs Is Nothing Then Exit Sub
-    If targetWs Is Nothing Then Exit Sub
+' 通常Excel出力用: 結合セルを壊さず、元シート上で見えている数式結果を値として確定する
+Private Sub ConvertSheetFormulasToValuesSafely(ByVal ws As Worksheet)
+    If ws Is Nothing Then Exit Sub
 
     Dim rng As Range
     Dim formulaRange As Range
     Dim cell As Range
-    Dim dstCell As Range
+    Dim topLeft As Range
     Dim displayText As String
 
-    Set rng = GetValueConversionRange(sourceWs)
+    Set rng = GetValueConversionRange(ws)
     If rng Is Nothing Then Exit Sub
 
     On Error Resume Next
@@ -681,117 +568,52 @@ Private Sub ConvertFormulasToSourceDisplayedValues(ByVal sourceWs As Worksheet, 
     If formulaRange Is Nothing Then Exit Sub
 
     For Each cell In formulaRange.Cells
-        Set dstCell = targetWs.Range(cell.Address(False, False))
-        displayText = Trim$(CStr(cell.Text))
-
-        ' 元シートで空白に見える数式セルは、コピー先でも空白値として確定する
-        If displayText = "" Then
-            dstCell.ClearContents
+        If cell.MergeCells Then
+            Set topLeft = cell.MergeArea.Cells(1, 1)
+            If cell.Address(False, False) <> topLeft.Address(False, False) Then
+                GoTo NextCell
+            End If
         Else
-            ' 表示有りの場合は、元シートで評価済みの値を入れて数式を残さない
-            dstCell.Value = cell.Value
+            Set topLeft = cell
         End If
+
+        displayText = Trim$(CStr(topLeft.Text))
+        If displayText = "" Then
+            topLeft.ClearContents
+        Else
+            topLeft.Value = topLeft.Value
+        End If
+
+NextCell:
     Next cell
 End Sub
 
-' シートモジュールをコピーせず、表示内容・書式・印刷設定だけをxlsx用シートへ転記する
-Private Sub CopyWorksheetContentWithoutCode(ByVal sourceWs As Worksheet, ByVal targetWs As Worksheet)
-    If sourceWs Is Nothing Then Exit Sub
-    If targetWs Is Nothing Then Exit Sub
-
-    Dim usedRng As Range
-    Dim rowIndex As Long
-
-    targetWs.Cells.Clear
-    SetWorksheetNameUnique targetWs, sourceWs.Name
-
-    sourceWs.Cells.Copy
-    targetWs.Cells.PasteSpecial Paste:=xlPasteAll
-    targetWs.Cells.PasteSpecial Paste:=xlPasteColumnWidths
-    Application.CutCopyMode = False
-
-    On Error Resume Next
-    Set usedRng = sourceWs.UsedRange
-    If Not usedRng Is Nothing Then
-        For rowIndex = 1 To usedRng.Rows.Count
-            targetWs.Rows(usedRng.Row + rowIndex - 1).RowHeight = sourceWs.Rows(usedRng.Row + rowIndex - 1).RowHeight
-        Next rowIndex
-    End If
-
-    targetWs.Tab.Color = sourceWs.Tab.Color
-    targetWs.DisplayPageBreaks = sourceWs.DisplayPageBreaks
-    targetWs.PageSetup.PrintArea = sourceWs.PageSetup.PrintArea
-    targetWs.PageSetup.PrintTitleRows = sourceWs.PageSetup.PrintTitleRows
-    targetWs.PageSetup.PrintTitleColumns = sourceWs.PageSetup.PrintTitleColumns
-    targetWs.PageSetup.Orientation = sourceWs.PageSetup.Orientation
-    targetWs.PageSetup.PaperSize = sourceWs.PageSetup.PaperSize
-    targetWs.PageSetup.Zoom = sourceWs.PageSetup.Zoom
-    targetWs.PageSetup.FitToPagesWide = sourceWs.PageSetup.FitToPagesWide
-    targetWs.PageSetup.FitToPagesTall = sourceWs.PageSetup.FitToPagesTall
-    targetWs.PageSetup.LeftMargin = sourceWs.PageSetup.LeftMargin
-    targetWs.PageSetup.RightMargin = sourceWs.PageSetup.RightMargin
-    targetWs.PageSetup.TopMargin = sourceWs.PageSetup.TopMargin
-    targetWs.PageSetup.BottomMargin = sourceWs.PageSetup.BottomMargin
-    targetWs.PageSetup.HeaderMargin = sourceWs.PageSetup.HeaderMargin
-    targetWs.PageSetup.FooterMargin = sourceWs.PageSetup.FooterMargin
-    targetWs.PageSetup.CenterHorizontally = sourceWs.PageSetup.CenterHorizontally
-    targetWs.PageSetup.CenterVertically = sourceWs.PageSetup.CenterVertically
-    targetWs.PageSetup.LeftHeader = sourceWs.PageSetup.LeftHeader
-    targetWs.PageSetup.CenterHeader = sourceWs.PageSetup.CenterHeader
-    targetWs.PageSetup.RightHeader = sourceWs.PageSetup.RightHeader
-    targetWs.PageSetup.LeftFooter = sourceWs.PageSetup.LeftFooter
-    targetWs.PageSetup.CenterFooter = sourceWs.PageSetup.CenterFooter
-    targetWs.PageSetup.RightFooter = sourceWs.PageSetup.RightFooter
-    On Error GoTo 0
-End Sub
-
-' コピー先ブック内で重複しない安全なシート名を設定する
-Private Sub SetWorksheetNameUnique(ByVal ws As Worksheet, ByVal desiredName As String)
-    If ws Is Nothing Then Exit Sub
-
-    Dim baseName As String
-    Dim candidate As String
-    Dim counter As Long
-
-    baseName = SanitizeWorksheetName(desiredName)
-    If Len(baseName) = 0 Then baseName = "Sheet"
-    If Len(baseName) > 31 Then baseName = Left$(baseName, 31)
-
-    candidate = baseName
-    counter = 1
-    Do While WorksheetNameExists(ws.Parent, candidate, ws)
-        counter = counter + 1
-        candidate = Left$(baseName, 31 - Len("_" & CStr(counter))) & "_" & CStr(counter)
-    Loop
-
-    ws.Name = candidate
-End Sub
-
-Private Function SanitizeWorksheetName(ByVal sheetName As String) As String
-    Dim result As String
-    result = Trim$(sheetName)
-    result = Replace(result, "\", "_")
-    result = Replace(result, "/", "_")
-    result = Replace(result, "?", "_")
-    result = Replace(result, "*", "_")
-    result = Replace(result, "[", "_")
-    result = Replace(result, "]", "_")
-    result = Replace(result, ":", "_")
-    SanitizeWorksheetName = result
-End Function
-
-Private Function WorksheetNameExists(ByVal wb As Workbook, ByVal sheetName As String, ByVal ignoreWs As Worksheet) As Boolean
-    Dim ws As Worksheet
-    For Each ws In wb.Worksheets
-        If Not ignoreWs Is Nothing Then
-            If ws Is ignoreWs Then GoTo NextSheet
-        End If
-        If StrComp(ws.Name, sheetName, vbTextCompare) = 0 Then
-            WorksheetNameExists = True
+Private Function IsSheetNameSelected(ByVal sheetName As String, ByRef sheetNames() As String) As Boolean
+    Dim i As Long
+    For i = LBound(sheetNames) To UBound(sheetNames)
+        If StrComp(sheetName, sheetNames(i), vbTextCompare) = 0 Then
+            IsSheetNameSelected = True
             Exit Function
         End If
-NextSheet:
-    Next ws
+    Next i
+End Function
+
+Private Function CreateTempWorkbookCopyPath(ByVal sourceWb As Workbook) As String
+    Dim tempDir As String
+    Dim ext As String
+    Dim dotPos As Long
+
+    tempDir = Environ$("TEMP")
+    If Len(tempDir) = 0 Then tempDir = CurDir$
+
+    ext = ".xlsm"
+    If Not sourceWb Is Nothing Then
+        dotPos = InStrRev(sourceWb.Name, ".")
+        If dotPos > 0 Then ext = Mid$(sourceWb.Name, dotPos)
+    End If
+
+    Randomize
+    CreateTempWorkbookCopyPath = tempDir & "\PdfExport_" & Format(Now, "yyyymmdd_hhnnss") & "_" & CStr(Int(Rnd() * 1000000)) & ext
 End Function
 
 '---------------------- 補助関数 ----------------------------

@@ -563,8 +563,12 @@ Private Sub ConvertSheetFormulasToValuesSafely(ByVal ws As Worksheet)
     Dim rng As Range
     Dim formulaRange As Range
     Dim cell As Range
+    Dim unitRange As Range
     Dim topLeft As Range
     Dim displayText As String
+    Dim valueToSet As Variant
+    Dim processed As Object
+    Dim key As String
 
     Set rng = GetValueConversionRange(ws)
     If rng Is Nothing Then Exit Sub
@@ -579,21 +583,38 @@ Private Sub ConvertSheetFormulasToValuesSafely(ByVal ws As Worksheet)
 
     If formulaRange Is Nothing Then Exit Sub
 
+    Set processed = CreateObject("Scripting.Dictionary")
+
     For Each cell In formulaRange.Cells
         If cell.MergeCells Then
-            Set topLeft = cell.MergeArea.Cells(1, 1)
-            If cell.Address(False, False) <> topLeft.Address(False, False) Then
-                GoTo NextCell
-            End If
+            Set unitRange = cell.MergeArea
+            Set topLeft = unitRange.Cells(1, 1)
+            key = unitRange.Address(External:=True)
+
+            If processed.Exists(key) Then GoTo NextCell
+            processed.Add key, True
+
+            ' 結合範囲は左上セルに数式がある場合だけ、範囲全体を1単位として処理する
+            If Not topLeft.HasFormula Then GoTo NextCell
         Else
+            Set unitRange = cell
             Set topLeft = cell
+            key = topLeft.Address(External:=True)
+
+            If processed.Exists(key) Then GoTo NextCell
+            processed.Add key, True
         End If
 
         displayText = Trim$(CStr(topLeft.Text))
+        valueToSet = topLeft.Value
+
         If displayText = "" Then
-            topLeft.ClearContents
+            ' 結合セルの場合もMergeArea全体を対象にして数式だけを消す
+            unitRange.ClearContents
         Else
-            topLeft.Value = topLeft.Value
+            ' 結合範囲全体の数式を消してから、左上セルへ評価済み値だけを戻す
+            unitRange.ClearContents
+            topLeft.Value = valueToSet
         End If
 
 NextCell:

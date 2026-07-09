@@ -609,11 +609,10 @@ Private Sub ConvertSheetFormulasToValuesSafely(ByVal ws As Worksheet)
         valueToSet = topLeft.Value
 
         If displayText = "" Then
-            ' 結合セルの場合もMergeArea全体を対象にして数式だけを消す
-            unitRange.ClearContents
+            ' ClearContentsは結合セルで1004になることがあるため、左上セルへ空文字を直接入れる
+            topLeft.Value = vbNullString
         Else
-            ' 結合範囲全体の数式を消してから、左上セルへ評価済み値だけを戻す
-            unitRange.ClearContents
+            ' 結合状態を維持したまま、左上セルへ評価済み値を直接入れて数式を潰す
             topLeft.Value = valueToSet
         End If
 

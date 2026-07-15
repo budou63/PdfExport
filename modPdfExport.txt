@@ -494,16 +494,16 @@ Private Sub ExportWorkbookCopyAsXlsx(ByVal sourceWb As Workbook, ByRef sheetName
         If targetWs Is Nothing Then
             Err.Raise vbObjectError + 1103, , "一時ブック内にシートが見つかりません: " & sheetNames(i)
         End If
-        targetWs.Visible = xlSheetVisible
+        Call SetSheetVisibleSafely(targetWs, xlSheetVisible)
     Next i
 
     If keepFormulas Then
         ' 関数保持版: 参照元シートを削除せずVeryHiddenで残す
         For Each ws In wbTemp.Worksheets
             If IsSheetNameSelected(ws.Name, sheetNames) Then
-                ws.Visible = xlSheetVisible
+                Call SetSheetVisibleSafely(ws, xlSheetVisible)
             Else
-                ws.Visible = xlSheetVeryHidden
+                Call SetSheetVisibleSafely(ws, xlSheetVeryHidden)
             End If
         Next ws
 
@@ -513,20 +513,19 @@ Private Sub ExportWorkbookCopyAsXlsx(ByVal sourceWb As Workbook, ByRef sheetName
         For i = LBound(sheetNames) To UBound(sheetNames)
             Set targetWs = シート取得(sheetNames(i), wbTemp)
             If Not targetWs Is Nothing Then
-                targetWs.Visible = xlSheetVisible
+                Call SetSheetVisibleSafely(targetWs, xlSheetVisible)
                 Call ConvertSheetFormulasToValuesSafely(targetWs)
             End If
         Next i
 
-        ' 値化後に対象外シートを削除する
-        For i = wbTemp.Worksheets.Count To 1 Step -1
-            Set ws = wbTemp.Worksheets(i)
-            If Not IsSheetNameSelected(ws.Name, sheetNames) Then
-                ws.Delete
+        ' 値化後も対象外シートは削除せずVeryHiddenで残す
+        For Each ws In wbTemp.Worksheets
+            If IsSheetNameSelected(ws.Name, sheetNames) Then
+                Call SetSheetVisibleSafely(ws, xlSheetVisible)
             Else
-                ws.Visible = xlSheetVisible
+                Call SetSheetVisibleSafely(ws, xlSheetVeryHidden)
             End If
-        Next i
+        Next ws
     End If
 
     wbTemp.SaveAs Filename:=outputPath, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
@@ -618,6 +617,41 @@ Private Sub ConvertSheetFormulasToValuesSafely(ByVal ws As Worksheet)
 
 NextCell:
     Next cell
+End Sub
+
+Private Sub SetSheetVisibleSafely(ByVal ws As Worksheet, ByVal visibleState As XlSheetVisibility)
+    If ws Is Nothing Then Exit Sub
+
+    On Error GoTo EH
+    If ws.Visible <> visibleState Then
+        ws.Visible = visibleState
+    End If
+    Exit Sub
+
+EH:
+    Dim stateName As String
+    Select Case visibleState
+        Case xlSheetVisible
+            stateName = "表示"
+        Case xlSheetHidden
+            stateName = "非表示"
+        Case xlSheetVeryHidden
+            stateName = "VeryHidden"
+        Case Else
+            stateName = CStr(visibleState)
+    End Select
+
+    Dim protectNote As String
+    If ws.Parent.ProtectStructure Then
+        protectNote = "ブックの構造保護が有効です。パスワード付き保護は自動解除しないため、解除してから再実行してください。"
+    Else
+        protectNote = "ブックの構造保護またはシート状態を確認してください。"
+    End If
+
+    Err.Raise Err.Number, , "シートの表示状態を変更できません: " & ws.Name & _
+        " -> " & stateName & vbCrLf & _
+        protectNote & vbCrLf & _
+        Err.Description
 End Sub
 
 Private Function IsSheetNameSelected(ByVal sheetName As String, ByRef sheetNames() As String) As Boolean

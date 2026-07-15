@@ -48,7 +48,7 @@ Application.Calculation = xlCalculationManual
 
 ## 値貼り付けモードと関数保持モード
 
-- 値貼り付けモードでは、対象シートだけを成果物に残します。対象外シートを削除する前に、対象シート上の数式セルだけを `ConvertSheetFormulasToValuesSafely` で値化します。
+- 値貼り付けモードでは、対象シートを表示状態にし、対象シート上の数式セルだけを `ConvertSheetFormulasToValuesSafely` で値化します。対象外シートは削除せず、`xlSheetVeryHidden` で残します。
 - 値貼り付けモードの数式値化では、結合セルの左上セルだけを処理し、元シート上で空白に見える数式セルは空白として確定します。これにより、結合セルに対する一括値貼り付けの1004エラーや、空白に見える数式セルが不要に `0` になる問題を避けます。
 - 関数保持モードでは、数式は保持します。対象シートは表示状態にし、対象外シートは削除せず `xlSheetVeryHidden` にして残します。そのため、数式自体が未選択シートを参照している場合でも参照切れを起こしにくくなります。
 - どちらのモードも最終保存形式は `.xlsx` です。保存形式によりVBAコードは成果物に残らないため、出力ファイルを開いたときの `RYOHI_REASON_CELL` 未定義などのVBAコンパイルエラーを防ぎます。
@@ -58,7 +58,7 @@ Application.Calculation = xlCalculationManual
 この修正はコード上の静的確認まで実施していますが、この環境では Excel 実機を起動できないため、Excel上での実行確認は未実施です。利用者環境では、以下を確認してください。
 
 1. 通常Excel出力で、結合セル1004エラーが出ないこと。
-2. 通常Excel出力で、対象シートだけが成果物に残ること。
+2. 通常Excel出力で、対象シートは表示され、対象外シートは `xlSheetVeryHidden` になること。
 3. 通常Excel出力で、数式は値に変換されること。
 4. 通常Excel出力で、元シートで空白に見えていた関数セルが不要に `0` にならないこと。
 5. 関数保持Excel出力で、対象シートは表示され、対象外シートは `xlSheetVeryHidden` になること。
@@ -73,13 +73,14 @@ Application.Calculation = xlCalculationManual
 
 ## 変更履歴メモ
 
-- `modPdfExport.txt`: Excel出力4系統を、空ブック再構築方式から `SaveCopyAs` による元ブック全体の一時コピー加工方式へ変更しました。通常出力では対象シートを値化してから対象外シートを削除し、関数保持出力では対象外シートを `xlSheetVeryHidden` で残します。
+- `modPdfExport.txt`: Excel出力4系統を、空ブック再構築方式から `SaveCopyAs` による元ブック全体の一時コピー加工方式へ変更しました。通常出力でも関数保持出力でも対象外シートは削除せず、`xlSheetVeryHidden` で残します。通常出力では対象シートの数式だけを値化します。
 - `README.md`: 一時ブック方式、値貼り付けモードと関数保持モードの違い、Excel実機での確認手順を更新しました。
 
 ## テスト結果
 
-- `rg -n "ExportWorkbookCopyAsXlsx|SaveCopyAs|ConvertSheetFormulasToValuesSafely|xlSheetVeryHidden" modPdfExport.txt` により、一時コピー方式・安全な数式値化・関数保持時のVeryHidden化が実装されていることを確認しました。
+- `rg -n "ExportWorkbookCopyAsXlsx|SaveCopyAs|ConvertSheetFormulasToValuesSafely|SetSheetVisibleSafely|xlSheetVeryHidden" modPdfExport.txt` により、一時コピー方式・安全な数式値化・通常/関数保持時のVeryHidden化が実装されていることを確認しました。
 - `rg -n "CopyWorksheetContentWithoutCode|ConvertFormulasToSourceDisplayedValues|Workbooks\.Add\(xlWBATWorksheet\)" modPdfExport.txt; test $? -eq 1` により、空ブック再構築方式の主処理が残っていないことを確認しました。
+- `rg -n "ws\.Delete|\.Delete" modPdfExport.txt; test $? -eq 1` により、対象外シートを削除していないことを確認しました。
 - `rg -n "ws\.Copy" modPdfExport.txt; test $? -eq 1` により、シート単体コピーを使用していないことを確認しました。
 - `git diff --check` により、差分に空白エラーがないことを確認しました。
 - Excel 実機がないため、上記13項目の実動作確認は未実施です。

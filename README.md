@@ -55,7 +55,7 @@ Application.Calculation = xlCalculationManual
 
 ## 実機確認について
 
-この修正はコード上の静的確認まで実施していますが、この環境では Excel 実機を起動できないため、Excel上での実行確認は未実施です。利用者環境では、以下を確認してください。
+今回の対象ブック特定修正について、Excel実機での動作確認は未実施です。以下は利用者環境で実施する確認項目です。
 
 1. 通常Excel出力で、結合セル1004エラーが出ないこと。
 2. 通常Excel出力で、対象シートは表示され、対象外シートは `xlSheetVeryHidden` になること。
@@ -71,6 +71,16 @@ Application.Calculation = xlCalculationManual
 12. 一時ファイルが残らないこと。
 13. エラー時にも `Application.EnableEvents` などの設定が元に戻ること。
 
+## 対象ブック特定の回帰テスト
+
+次のコマンドで静的回帰テストを実行できます。
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+テストは、対象ブックの選択・フォーム初期化順序・再読込/出力/印刷/プリセット時の対象維持・閉じたブックの検出に関するソース上の条件を確認します。ExcelのUserFormイベント発火、VBAコンパイル、PDF/Excel出力、印刷の実動作は確認しないため、専用のダミーブックを使ったExcel実機テストが別途必要です。
+
 ## 変更履歴メモ
 
 - `modPdfExport.txt`: Excel出力4系統を、空ブック再構築方式から `SaveCopyAs` による元ブック全体の一時コピー加工方式へ変更しました。通常出力でも関数保持出力でも対象外シートは削除せず、`xlSheetVeryHidden` で残します。通常出力では対象シートの数式だけを値化します。
@@ -83,4 +93,4 @@ Application.Calculation = xlCalculationManual
 - `rg -n "ws\.Delete|\.Delete" modPdfExport.txt; test $? -eq 1` により、対象外シートを削除していないことを確認しました。
 - `rg -n "ws\.Copy" modPdfExport.txt; test $? -eq 1` により、シート単体コピーを使用していないことを確認しました。
 - `git diff --check` により、差分に空白エラーがないことを確認しました。
-- Excel 実機がないため、上記13項目の実動作確認は未実施です。
+- Excel実機での確認は未実施です。

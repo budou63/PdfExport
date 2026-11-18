@@ -4,30 +4,36 @@ Private Const PRESET_SHEET_NAME As String = "_Presets"
 Private mTargetWb As Workbook
 
 ' 出力対象ブックを設定（modPdfExportから呼ばれる）
-Public Sub SetTargetWorkbook(ByVal wb As Workbook)
+Public Function SetTargetWorkbook(ByVal wb As Workbook) As Boolean
+    On Error GoTo EH
+    If Not modPdfExport.PdfExport_IsWorkbookAvailable(wb) Then
+        MsgBox "出力対象ブックが無効か、すでに閉じられています。", vbExclamation
+        Exit Function
+    End If
     Set mTargetWb = wb
-End Sub
+    Me.Caption = "PDF/Excel出力 - 対象ブック: " & mTargetWb.Name
+    Call LoadSheets
+    If Not EnsureTargetWorkbookAvailable(showMessage:=False) Then
+        MsgBox "対象ブックが閉じられたため、フォームを起動できません。", vbExclamation
+        Exit Function
+    End If
+    Call InitializePresetControls
+    If Not EnsureTargetWorkbookAvailable(showMessage:=False) Then
+        MsgBox "対象ブックが閉じられたため、フォームを起動できません。", vbExclamation
+        Exit Function
+    End If
+    SetTargetWorkbook = True
+    Exit Function
+EH:
+    Set mTargetWb = Nothing
+    MsgBox "対象ブックの設定に失敗しました。" & vbCrLf & Err.Description, vbExclamation
+End Function
 
 '============================================================
 ' シート＆ページ指定でPDF出力するためのUI
 '============================================================
 
 Private Sub UserForm_Initialize()
-    ' === 出力対象ブックの確定 ===
-    ' [FIX] SetTargetWorkbook が呼ばれていない場合はエラーを表示
-    ' （アドイン化対応：ThisWorkbook依存を完全に排除）
-    If mTargetWb Is Nothing Then
-        ' フォールバック：ActiveWorkbookを使用（SetTargetWorkbookが呼ばれていない場合）
-        ' ただし、これは本来 SetTargetWorkbook で設定されるべき
-        On Error Resume Next
-        Set mTargetWb = ActiveWorkbook
-        If Err.Number <> 0 Or mTargetWb Is Nothing Then
-            MsgBox "出力対象ブックが設定されていません。" & vbCrLf & _
-                   "アドインの初期化に問題がある可能性があります。", vbCritical
-            Exit Sub
-        End If
-        On Error GoTo 0
-    End If
 
     ' === フォームサイズの固定 ===
     With Me
@@ -112,8 +118,6 @@ Private Sub UserForm_Initialize()
     ' === ListBox の初期化（複数選択可能） ===
     Me.Controls("lstSheets").MultiSelect = fmMultiSelectMulti
 
-    Call LoadSheets
-    ' LoadSheets 内で UpdatePageRangeUI と ShowPageInfo が呼ばれる
 
     ' === 前回の出力先を復元（なければデスクトップを初期値に） ===
     Dim last As String
@@ -121,11 +125,10 @@ Private Sub UserForm_Initialize()
     If Len(last) = 0 Then last = Environ$("USERPROFILE") & "\Desktop"
     Me.Controls("txtOutDir").Text = last
     
-    ' === プリセット機能の初期化（コントロールが存在する場合のみ） ===
-    Call InitializePresetControls
 End Sub
 
 Private Sub cmdRefresh_Click()
+    If Not EnsureTargetWorkbookAvailable() Then Exit Sub
     Call LoadSheets
 End Sub
 
@@ -175,10 +178,7 @@ End Sub
 
 Private Sub cmdExport_Click()
     ' [FIX] 対象ブックが無効な場合は処理を中断
-    If mTargetWb Is Nothing Then
-        MsgBox "出力対象ブックが設定されていません。", vbExclamation
-        Exit Sub
-    End If
+    If Not EnsureTargetWorkbookAvailable() Then Exit Sub
 
     Dim selCount As Long
     selCount = GetSelectedSheetCount()
@@ -396,10 +396,7 @@ Private Sub cmdPrint_Click()
     ' 4) エラー時でも必ず塗りつぶしを復元する
 
     ' [FIX] 対象ブックが無効な場合は処理を中断
-    If mTargetWb Is Nothing Then
-        MsgBox "印刷対象ブックが設定されていません。", vbExclamation
-        Exit Sub
-    End If
+    If Not EnsureTargetWorkbookAvailable() Then Exit Sub
 
     Dim selCount As Long
     selCount = GetSelectedSheetCount()
@@ -526,14 +523,27 @@ End Sub
 
 '---------------------- 内部処理 ------------------------------
 
+Private Function EnsureTargetWorkbookAvailable(Optional ByVal showMessage As Boolean = True) As Boolean
+    If mTargetWb Is Nothing Then
+        If showMessage Then MsgBox "出力対象ブックが設定されていません。", vbExclamation
+        Exit Function
+    End If
+    If modPdfExport.PdfExport_IsWorkbookAvailable(mTargetWb) Then
+        EnsureTargetWorkbookAvailable = True
+        Exit Function
+    End If
+    Set mTargetWb = Nothing
+    Me.Caption = "PDF/Excel出力"
+    If ControlExists(Me, "lstSheets") Then Me.Controls("lstSheets").Clear
+    If showMessage Then MsgBox "対象ブックが閉じられたか、利用できなくなったため処理を中止しました。", vbExclamation
+End Function
+
 Private Sub LoadSheets()
     Dim ws As Worksheet
     Dim lstSheets As MSForms.ListBox
     
     ' 対象ブックが無効な場合は処理を中断
-    If mTargetWb Is Nothing Then
-        Exit Sub
-    End If
+    If Not EnsureTargetWorkbookAvailable(showMessage:=False) Then Exit Sub
     
     Set lstSheets = Me.Controls("lstSheets")
     
@@ -561,7 +571,7 @@ Private Sub ShowPageInfo()
     End If
 
     ' 対象ブックが無効な場合は処理を中断
-    If mTargetWb Is Nothing Then
+    If Not EnsureTargetWorkbookAvailable(showMessage:=False) Then
         Me.Controls("lblInfo").Caption = ""
         Exit Sub
     End If
@@ -734,7 +744,7 @@ End Function
 
 '============================================================
 ' プリセット機能（シート選択状態の保存・復元）
-' 保存場所: ThisWorkbook 内の非表示シート「_Presets」
+' 保存場所: 出力対象ブック内の非表示シート「_Presets」
 ' 形式: 1行＝1プリセット、1列目=プリセット名、2列目以降=シート名
 '============================================================
 
@@ -776,6 +786,7 @@ End Sub
 ' 現在の lstSheets の選択状態をプリセットとして保存
 '----------------------------------------
 Private Sub cmdSavePreset_Click()
+    If Not EnsureTargetWorkbookAvailable() Then Exit Sub
     Dim presetName As String
     presetName = Trim$(Me.Controls("txtPresetName").Text)
     
@@ -819,6 +830,7 @@ End Sub
 ' ComboBox で選択されているプリセットを削除
 '----------------------------------------
 Private Sub cmdDeletePreset_Click()
+    If Not EnsureTargetWorkbookAvailable() Then Exit Sub
     Dim presetName As String
     presetName = Trim$(Me.Controls("cmbPresetList").Value)
     
@@ -1063,7 +1075,7 @@ Private Function GetOrCreatePresetSheet(ByVal createIfNotExists As Boolean) As W
     Dim ws As Worksheet
     
     ' 対象ブックが無効な場合は終了
-    If mTargetWb Is Nothing Then
+    If Not EnsureTargetWorkbookAvailable(showMessage:=False) Then
         Set GetOrCreatePresetSheet = Nothing
         Exit Function
     End If

@@ -22,34 +22,37 @@ Private Const DEFAULT_OUT_DIR As String = ""
 Public Sub PDF_エクスポート_フォーム表示()
     Dim targetWb As Workbook
     Dim f As frmPdfExport
-    
-    ' [FIX] 安全にtargetWbを決定（ActiveWorkbookがThisWorkbookなら別ブックを選ぶ）
+
     Set targetWb = GetTargetWorkbook()
     If targetWb Is Nothing Then
         MsgBox "出力対象となるブックが見つかりません。" & vbCrLf & _
                "Excelブックを開いてから実行してください。", vbExclamation
         Exit Sub
     End If
-    
-    On Error Resume Next
+
+    On Error GoTo EH
     Set f = New frmPdfExport
-    ' [FIX] 安全に決定したtargetWbを設定
-    f.SetTargetWorkbook targetWb
-    f.Show vbModeless                  ' ← ここがポイント（モデルレス）
-    If Err.Number <> 0 Then            ' 既にUnLoad済み等で参照切れ時の保険
-        Err.Clear
-        Set f = New frmPdfExport
-        f.SetTargetWorkbook targetWb
-        f.Show vbModeless
+    If Not f.SetTargetWorkbook(targetWb) Then
+        Unload f
+        Exit Sub
     End If
+    f.Show vbModeless
+    Exit Sub
+
+EH:
+    Dim errDescription As String
+    errDescription = Err.Description
+    On Error Resume Next
+    If Not f Is Nothing Then Unload f
     On Error GoTo 0
+    MsgBox "フォームを起動できませんでした。" & vbCrLf & errDescription, vbExclamation
 End Sub
 
 
 ' 指定シート・ページ範囲でPDF出力（フォームから呼ばれる）
 ' outDirUi: フォームのテキストボックスで指定された出力先（空なら既定）
 ' fileNameUi: フォームで指定されたファイル名（空なら自動生成）
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Sub PDF_出力実行(ByVal sheetName As String, _
                        ByVal fromPage As Variant, _
                        ByVal toPage As Variant, _
@@ -58,12 +61,16 @@ Public Sub PDF_出力実行(ByVal sheetName As String, _
                        ByVal fileNameUi As String, _
                        Optional ByVal targetWb As Workbook = Nothing)
 
-    ' [FIX] 対象ブックの確定（Nothingの場合はActiveWorkbookを補完）
+    ' [FIX] 対象ブックの確定（省略時は有効なアクティブブックを使用）
     Dim wb As Workbook
     If targetWb Is Nothing Then
-        Set wb = ActiveWorkbook
+        Set wb = GetTargetWorkbook()
     Else
         Set wb = targetWb
+    End If
+    If Not PdfExport_IsWorkbookAvailable(wb) Then
+        MsgBox "出力対象ブックが無効か、閉じられています。", vbExclamation
+        Exit Sub
     End If
 
     Dim ws As Worksheet
@@ -155,7 +162,7 @@ End Sub
 ' 土地調書転記 → 指定形式で出力（フォームから呼ばれる）
 '   1) 既存の転記マクロを実行
 '   2) PDF または Excel で保存
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Sub 土地調書_出力実行(ByVal sheetName As String, _
                          ByVal fromPage As Variant, _
                          ByVal toPage As Variant, _
@@ -214,7 +221,7 @@ EH:
 End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 ' 【修正】英数字のみの安定したエントリポイント（日本語名の揺れ/全角混入があっても呼び出しが壊れない）
 Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
@@ -222,9 +229,13 @@ Public Sub Excel_MultiSheetExport(ByRef sheetNames() As String, ByVal outDirUi A
 
     Dim wb As Workbook
     If targetWb Is Nothing Then
-        Set wb = ActiveWorkbook
+        Set wb = GetTargetWorkbook()
     Else
         Set wb = targetWb
+    End If
+    If Not PdfExport_IsWorkbookAvailable(wb) Then
+        MsgBox "出力対象ブックが無効か、閉じられています。", vbExclamation
+        Exit Sub
     End If
 
     Dim i As Long
@@ -280,13 +291,13 @@ End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（値貼り付け）
 ' 【修正】日本語名のラッパー（後方互換性のため保持）
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Sub Excel_複数シート出力実行(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
     Call Excel_MultiSheetExport(sheetNames, outDirUi, fileNameUi, targetWb)
 End Sub
 
 ' 指定シートを Excel 形式（値貼り付け）で保存
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Sub Excel_出力実行(ByVal sheetName As String, _
                        ByVal outDirUi As String, _
                        ByVal fileNameUi As String, _
@@ -294,9 +305,13 @@ Public Sub Excel_出力実行(ByVal sheetName As String, _
 
     Dim wb As Workbook
     If targetWb Is Nothing Then
-        Set wb = ActiveWorkbook
+        Set wb = GetTargetWorkbook()
     Else
         Set wb = targetWb
+    End If
+    If Not PdfExport_IsWorkbookAvailable(wb) Then
+        MsgBox "出力対象ブックが無効か、閉じられています。", vbExclamation
+        Exit Sub
     End If
 
     Dim ws As Worksheet
@@ -339,7 +354,7 @@ EH:
 End Sub
 
 ' 指定シートを Excel 形式（関数保持）で保存
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
                                    ByVal outDirUi As String, _
                                    ByVal fileNameUi As String, _
@@ -347,9 +362,13 @@ Public Sub Excel_出力実行_関数保持(ByVal sheetName As String, _
 
     Dim wb As Workbook
     If targetWb Is Nothing Then
-        Set wb = ActiveWorkbook
+        Set wb = GetTargetWorkbook()
     Else
         Set wb = targetWb
+    End If
+    If Not PdfExport_IsWorkbookAvailable(wb) Then
+        MsgBox "出力対象ブックが無効か、閉じられています。", vbExclamation
+        Exit Sub
     End If
 
     Dim ws As Worksheet
@@ -391,16 +410,20 @@ EH:
 End Sub
 
 ' 複数シートを1つのExcelファイルにまとめて保存（関数保持）
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Sub Excel_複数シート出力実行_関数保持(ByRef sheetNames() As String, ByVal outDirUi As String, ByVal fileNameUi As String, Optional ByVal targetWb As Workbook = Nothing)
 
     On Error GoTo EH
 
     Dim wb As Workbook
     If targetWb Is Nothing Then
-        Set wb = ActiveWorkbook
+        Set wb = GetTargetWorkbook()
     Else
         Set wb = targetWb
+    End If
+    If Not PdfExport_IsWorkbookAvailable(wb) Then
+        MsgBox "出力対象ブックが無効か、閉じられています。", vbExclamation
+        Exit Sub
     End If
 
     Dim i As Long
@@ -685,67 +708,63 @@ End Function
 '---------------------- 補助関数 ----------------------------
 
 ' 出力対象ブックを安全に決定する関数
-' ActiveWorkbookがThisWorkbook（アドイン自身）の場合は、別のブックを選択
+' アクティブな通常ブックだけを対象にし、候補がなければ中止
 ' 戻り値: 出力対象となるブック（見つからない場合はNothing）
 Private Function GetTargetWorkbook() As Workbook
     Dim wb As Workbook
-    Dim addinWb As Workbook
-    
-    ' アドイン自身（ThisWorkbook）を取得
-    Set addinWb = ThisWorkbook
-    
-    ' ActiveWorkbookがアドイン自身でない場合は、ActiveWorkbookを返す
-    On Error Resume Next
-    Set wb = ActiveWorkbook
-    On Error GoTo 0
-    
-    If Not wb Is Nothing Then
-        ' ActiveWorkbookがアドイン自身でない場合
-        If Not wb Is addinWb Then
-            Set GetTargetWorkbook = wb
-            Exit Function
-        End If
-    End If
-    
-    ' ActiveWorkbookがアドイン自身、または取得できない場合は、
-    ' Workbooksコレクションからアドイン以外の最初のブックを探す
-    For Each wb In Workbooks
-        If Not wb Is addinWb Then
-            Set GetTargetWorkbook = wb
-            Exit Function
-        End If
-    Next wb
-    
-    ' 見つからない場合はNothingを返す
+    On Error GoTo EH
+
+    Set wb = Application.ActiveWorkbook
+    If Not PdfExport_IsWorkbookAvailable(wb) Then Exit Function
+    Set GetTargetWorkbook = wb
+    Exit Function
+
+EH:
     Set GetTargetWorkbook = Nothing
 End Function
 
+Public Function PdfExport_IsWorkbookAvailable(ByVal targetWb As Workbook) As Boolean
+    Dim openWb As Workbook
+    On Error GoTo EH
+
+    If targetWb Is Nothing Then Exit Function
+
+    For Each openWb In Application.Workbooks
+        If openWb Is targetWb Then
+            If openWb Is ThisWorkbook Then Exit Function
+            If openWb.IsAddin Then Exit Function
+            PdfExport_IsWorkbookAvailable = True
+            Exit Function
+        End If
+    Next openWb
+
+EH:
+End Function
+
 ' シート取得（Name/CodeNameどちらでも可）
-' targetWb: 対象ブック（Nothingの場合はActiveWorkbookを使用）
+' targetWb: 対象ブック（省略時は有効なアクティブブックを使用）
 Private Function シート取得(ByVal nameOrCodeName As String, Optional ByVal targetWb As Workbook = Nothing) As Worksheet
     Dim wb As Workbook
     Dim ws As Worksheet
-    
-    ' 対象ブックの確定
+
     If targetWb Is Nothing Then
-        Set wb = ActiveWorkbook
+        Set wb = GetTargetWorkbook()
     Else
         Set wb = targetWb
     End If
-    
-    ' シート検索
+    If Not PdfExport_IsWorkbookAvailable(wb) Then Exit Function
+
     For Each ws In wb.Worksheets
         If StrComp(ws.Name, nameOrCodeName, vbTextCompare) = 0 Or _
            StrComp(ws.CodeName, nameOrCodeName, vbTextCompare) = 0 Then
             Set シート取得 = ws
             Exit Function
         End If
-    Next
-    Set シート取得 = Nothing
+    Next ws
 End Function
 
 ' 推定ページ数（印刷範囲・倍率・改ページ設定に依存）
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
 Public Function 推定ページ数(ByVal sheetName As String, Optional ByVal targetWb As Workbook = Nothing) As Long
     ' [FIX] シート取得にtargetWbを渡す
     Dim ws As Worksheet
@@ -777,8 +796,8 @@ Public Function 推定ページ数(ByVal sheetName As String, Optional ByVal tar
 End Function
 
 ' 出力先の解決（フォーム値 > 定数 > 既定：ブック\PDF）
-' [ADD] targetWb: 出力対象ブック（Nothingの場合はActiveWorkbookを使用）
-' [FIX] アドイン化対応：targetWbがNothingの場合はActiveWorkbookを使用（フォールバック）
+' [ADD] targetWb: 出力対象ブック（省略時は有効なアクティブブックを使用）
+' [FIX] アドイン化対応：targetWbが省略時は有効なアクティブブックを使用（フォールバック）
 Private Function 解決出力先(ByVal uiPath As String, Optional ByVal targetWb As Workbook = Nothing) As String
     Dim p As String
     p = Trim$(uiPath)
@@ -789,23 +808,21 @@ Private Function 解決出力先(ByVal uiPath As String, Optional ByVal targetWb
 
     If Len(DEFAULT_OUT_DIR) > 0 Then
         解決出力先 = DEFAULT_OUT_DIR
+        Exit Function
+    End If
+
+    Dim wb As Workbook
+    If targetWb Is Nothing Then
+        Set wb = GetTargetWorkbook()
     Else
-        ' [FIX] targetWbのパスを使用（アドイン自身ではなく、出力対象のブック）
-        Dim wb As Workbook
-        If targetWb Is Nothing Then
-            ' フォールバック：ActiveWorkbookを使用（targetWbが渡されていない場合）
-            Set wb = ActiveWorkbook
-        Else
-            Set wb = targetWb
-        End If
-        
-        ' [FIX] ブックが無効な場合やパスが取得できない場合はデスクトップを使用
-        If Not wb Is Nothing And Len(wb.path) > 0 Then
-            解決出力先 = wb.path & "\PDF"
-        Else
-            ' パスが取得できない場合はデスクトップ（保存されていないブックの場合）
-            解決出力先 = Environ$("USERPROFILE") & "\Desktop"
-        End If
+        Set wb = targetWb
+    End If
+    If Not PdfExport_IsWorkbookAvailable(wb) Then Exit Function
+
+    If Len(wb.Path) > 0 Then
+        解決出力先 = wb.Path & Chr$(92) & "PDF"
+    Else
+        解決出力先 = Environ$("USERPROFILE") & Chr$(92) & "Desktop"
     End If
 End Function
 

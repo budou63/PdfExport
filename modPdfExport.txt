@@ -490,8 +490,9 @@ Private Sub ExportWorkbookCopyAsXlsx(ByVal sourceWb As Workbook, ByRef sheetName
     Dim errDesc As String
     Dim tempPath As String
     Dim wbTemp As Workbook
-    Dim ws As Worksheet
+    Dim sheetItem As Object
     Dim targetWs As Worksheet
+    Dim keepSelected As Boolean
     Dim i As Long
 
     savedEnableEvents = Application.EnableEvents
@@ -521,14 +522,19 @@ Private Sub ExportWorkbookCopyAsXlsx(ByVal sourceWb As Workbook, ByRef sheetName
     Next i
 
     If keepFormulas Then
-        ' 関数保持版: 参照元シートを削除せずVeryHiddenで残す
-        For Each ws In wbTemp.Worksheets
-            If IsSheetNameSelected(ws.Name, sheetNames) Then
-                Call SetSheetVisibleSafely(ws, xlSheetVisible)
-            Else
-                Call SetSheetVisibleSafely(ws, xlSheetVeryHidden)
+        ' 関数保持版: 選択シートは表示し、その他のシートはVeryHiddenで保持する
+        For Each sheetItem In wbTemp.Sheets
+            keepSelected = False
+            If TypeOf sheetItem Is Worksheet Then
+                keepSelected = IsSheetNameSelected(sheetItem.Name, sheetNames)
             End If
-        Next ws
+
+            If keepSelected Then
+                Call SetSheetVisibleSafely(sheetItem, xlSheetVisible)
+            Else
+                Call SetSheetVisibleSafely(sheetItem, xlSheetVeryHidden)
+            End If
+        Next sheetItem
 
         Call 正規化外部参照_関数保持(wbTemp, sourceWb.Name)
     Else
@@ -541,14 +547,9 @@ Private Sub ExportWorkbookCopyAsXlsx(ByVal sourceWb As Workbook, ByRef sheetName
             End If
         Next i
 
-        ' 値化後も対象外シートは削除せずVeryHiddenで残す
-        For Each ws In wbTemp.Worksheets
-            If IsSheetNameSelected(ws.Name, sheetNames) Then
-                Call SetSheetVisibleSafely(ws, xlSheetVisible)
-            Else
-                Call SetSheetVisibleSafely(ws, xlSheetVeryHidden)
-            End If
-        Next ws
+        ' 値化後に選択外のシートを一時ブックから削除する
+        ' 選択シートは元ブック全体のコピー内で先に値化してあるため、参照先シートを安全に削除できる
+        Call DeleteUnselectedSheets(wbTemp, sheetNames)
     End If
 
     wbTemp.SaveAs Filename:=outputPath, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
@@ -579,6 +580,34 @@ EH:
 End Sub
 
 ' 通常Excel出力用: 結合セルを壊さず、元シート上で見えている数式結果を値として確定する
+Private Sub DeleteUnselectedSheets(ByVal wbTemp As Workbook, ByRef sheetNames() As String)
+    If wbTemp Is Nothing Then Err.Raise vbObjectError + 1110, , "一時ブックが見つかりません。"
+
+    Dim i As Long
+    Dim sheetItem As Object
+    Dim targetWs As Worksheet
+    Dim keepSheet As Boolean
+
+    ' 選択対象のWorksheetだけを残す。他のWorksheetやChartシートも一時コピーから削除する。
+    ' 選択シートは呼び出し元で表示状態・値化済みで、元ブックには変更を加えない。
+    For i = wbTemp.Sheets.Count To 1 Step -1
+        Set sheetItem = wbTemp.Sheets(i)
+        Set targetWs = Nothing
+        keepSheet = False
+
+        If TypeOf sheetItem Is Worksheet Then
+            Set targetWs = sheetItem
+            keepSheet = IsSheetNameSelected(targetWs.Name, sheetNames)
+        End If
+
+        If Not keepSheet Then
+            ' Excelでは非表示シートを直接削除できない場合があるため、一時コピー内で表示してから削除する
+            Call SetSheetVisibleSafely(sheetItem, xlSheetVisible)
+            sheetItem.Delete
+        End If
+    Next i
+End Sub
+
 Private Sub ConvertSheetFormulasToValuesSafely(ByVal ws As Worksheet)
     If ws Is Nothing Then Exit Sub
 
@@ -642,7 +671,7 @@ NextCell:
     Next cell
 End Sub
 
-Private Sub SetSheetVisibleSafely(ByVal ws As Worksheet, ByVal visibleState As XlSheetVisibility)
+Private Sub SetSheetVisibleSafely(ByVal ws As Object, ByVal visibleState As XlSheetVisibility)
     If ws Is Nothing Then Exit Sub
 
     On Error GoTo EH

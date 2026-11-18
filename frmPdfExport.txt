@@ -549,8 +549,9 @@ Private Sub LoadSheets()
     
     lstSheets.Clear
     For Each ws In mTargetWb.Worksheets
-        ' グラフシート等を除きたい場合は TypeName(ws)="Worksheet" をチェック
-        lstSheets.AddItem ws.Name
+        If ws.Visible = xlSheetVisible Then
+            lstSheets.AddItem ws.Name
+        End If
     Next ws
 
     Call UpdatePageRangeUI

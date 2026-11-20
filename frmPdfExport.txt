@@ -104,6 +104,16 @@ Private Sub UserForm_Initialize()
                "cmdPrint が見つかりません。", vbCritical
         Exit Sub
     End If
+    If Not ControlExists(Me, "optPrintSeparate") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "optPrintSeparate が見つかりません。", vbCritical
+        Exit Sub
+    End If
+    If Not ControlExists(Me, "optPrintCombined") Then
+        MsgBox "フォームに必要なコントロールが不足しています。" & vbCrLf & _
+               "optPrintCombined が見つかりません。", vbCritical
+        Exit Sub
+    End If
 
     ' === 出力形式コントロールの初期化（PDF をデフォルト選択、Excel は非選択） ===
     Me.Controls("cmdPrint").Caption = "印刷"
@@ -114,6 +124,11 @@ Private Sub UserForm_Initialize()
     Me.Controls("optExportPdf").GroupName = "grpExportFormat"
     Me.Controls("optExportExcel").GroupName = "grpExportFormat"
     Me.Controls("optExportExcelFormula").GroupName = "grpExportFormat"
+    ' 印刷方式はフォーム起動ごとにシート別印刷を初期値にする
+    Me.Controls("optPrintSeparate").GroupName = "grpPrintMode"
+    Me.Controls("optPrintCombined").GroupName = "grpPrintMode"
+    Me.Controls("optPrintSeparate").Value = True
+    Me.Controls("optPrintCombined").Value = False
 
     ' === ListBox の初期化（複数選択可能） ===
     Me.Controls("lstSheets").MultiSelect = fmMultiSelectMulti
@@ -389,137 +404,263 @@ Private Sub cmdCancel_Click()
 End Sub
 
 Private Sub cmdPrint_Click()
-    ' 変更点:
-    ' 1) modNoFillExport を明示的に呼び出す
-    ' 2) 印刷ダイアログを使わず PrintOut で印刷
-    ' 3) 複数シート選択時は選択状態を作ってまとめて印刷
-    ' 4) エラー時でも必ず塗りつぶしを復元する
+    Dim printWb As Workbook, savedWb As Workbook
+    Dim savedSheet As Object, selectedSheet As Object
+    Dim savedSelection As Collection, names As Collection, captured As Object
+    Dim ws As Worksheet, sheetName As String, currentSheet As String
+    Dim separateMode As Boolean, combinedMode As Boolean, allPages As Boolean
+    Dim totalJobs As Long, printJobs As Long, i As Long
+    Dim fromPage As Variant, toPage As Variant, value As Variant
+    Dim savedScreenUpdating As Boolean, savedEnableEvents As Boolean, savedDisplayAlerts As Boolean
+    Dim stateSaved As Boolean, needRestore As Boolean, printCallStarted As Boolean
+    Dim errorNumber As Long, errorDescription As String, restoreIssues As String, msg As String
 
-    ' [FIX] 対象ブックが無効な場合は処理を中断
+    On Error GoTo EH
     If Not EnsureTargetWorkbookAvailable() Then Exit Sub
+    Set printWb = mTargetWb
+    If Not ControlExists(Me, "optPrintSeparate") Or Not ControlExists(Me, "optPrintCombined") Then
+        MsgBox "印刷方式の選択コントロールがありません。フォーム設定を確認してください。", vbExclamation
+        Exit Sub
+    End If
+    value = Me.Controls("optPrintSeparate").Value
+    If IsNull(value) Then GoTo InvalidMode
+    separateMode = CBool(value)
+    value = Me.Controls("optPrintCombined").Value
+    If IsNull(value) Then GoTo InvalidMode
+    combinedMode = CBool(value)
+    If separateMode = combinedMode Then GoTo InvalidMode
 
-    Dim selCount As Long
-    selCount = GetSelectedSheetCount()
-
-    If selCount = 0 Then
+    If GetSelectedSheetCount() = 0 Then
         MsgBox "シートを選択してください。", vbExclamation
         Exit Sub
     End If
-
-    ' ページ範囲の取得（単一選択時のみ有効）
-    Dim f As Variant, t As Variant
-    Dim allPages As Boolean
-    If selCount = 1 Then
-        allPages = chkAll.Value
-        If allPages Then
-            f = Empty: t = Empty
-        Else
-            If Len(Trim$(txtFrom.Text)) = 0 Or Len(Trim$(txtTo.Text)) = 0 Then
-                MsgBox "ページ範囲（開始/終了）を入力してください。", vbExclamation
-                Exit Sub
-            End If
-            f = CLng(Val(txtFrom.Text))
-            t = CLng(Val(txtTo.Text))
-            If f <= 0 Or t < f Then
-                MsgBox "ページ範囲の指定が不正です。", vbExclamation
-                Exit Sub
-            End If
-        End If
-    Else
-        allPages = True
-        f = Empty: t = Empty
-    End If
-
-    Dim sheetNames As Collection
-    Set sheetNames = New Collection
-    Dim i As Long
-    For i = 0 To selCount - 1
-        sheetNames.Add GetSelectedSheetName(i)
+    Set names = New Collection
+    For i = 0 To GetSelectedSheetCount() - 1
+        sheetName = GetSelectedSheetName(i)
+        If Len(sheetName) = 0 Then Err.Raise vbObjectError + 1100, , "印刷対象のシート名を取得できませんでした。"
+        Set ws = GetVisiblePrintWorksheet(printWb, sheetName)
+        If ws Is Nothing Then Err.Raise vbObjectError + 1101, , "対象シートが存在しないか表示状態ではありません: " & sheetName
+        names.Add sheetName
     Next i
 
-    Dim savedActiveSheet As Worksheet
-    Dim savedActiveWorkbook As Workbook
-    Set savedActiveSheet = ActiveSheet
-    Set savedActiveWorkbook = ActiveWorkbook
+    If names.Count = 1 Then
+        allPages = chkAll.Value
+        If Not allPages Then
+            If Len(Trim$(txtFrom.Text)) = 0 Or Len(Trim$(txtTo.Text)) = 0 Then Err.Raise vbObjectError + 1102, , "ページ範囲（開始/終了）を入力してください。"
+            fromPage = CLng(Val(txtFrom.Text))
+            toPage = CLng(Val(txtTo.Text))
+            If fromPage <= 0 Or toPage < fromPage Then Err.Raise vbObjectError + 1103, , "ページ範囲の指定が不正です。"
+        End If
+        totalJobs = 1
+    ElseIf separateMode Then
+        totalJobs = names.Count
+    Else
+        totalJobs = 1
+    End If
 
-    Dim savedScreenUpdating As Boolean
-    Dim savedEnableEvents As Boolean
-    Dim savedDisplayAlerts As Boolean
     savedScreenUpdating = Application.ScreenUpdating
     savedEnableEvents = Application.EnableEvents
     savedDisplayAlerts = Application.DisplayAlerts
-
-    Dim captured As Object
-    Dim needRestore As Boolean
-    needRestore = False
-
+    On Error Resume Next
+    Set savedWb = Application.ActiveWorkbook
+    Set savedSheet = Application.ActiveSheet
+    Set savedSelection = New Collection
+    For Each selectedSheet In Application.ActiveWindow.SelectedSheets
+        savedSelection.Add selectedSheet.Name
+    Next selectedSheet
+    Err.Clear
     On Error GoTo EH
+    stateSaved = True
 
     Application.ScreenUpdating = False
     Application.EnableEvents = False
     Application.DisplayAlerts = False
-
-    Set captured = modNoFillExport.CaptureInteriors(mTargetWb, sheetNames)
-    modNoFillExport.ApplyNoFill mTargetWb, captured
+    Set captured = modNoFillExport.CaptureInteriors(printWb, names)
+    If captured Is Nothing Then Err.Raise vbObjectError + 1104, , "塗りつぶし状態を退避できませんでした。"
     needRestore = True
+    modNoFillExport.ApplyNoFill printWb, captured
+    If Not PrintInteriorsAreClear(printWb, captured) Then Err.Raise vbObjectError + 1105, , "印刷前に塗りつぶしを解除できませんでした。"
 
-    ' 印刷対象のシートを選択状態にする
-    mTargetWb.Activate
-    Dim ws As Worksheet
-    For i = 1 To sheetNames.count
-        Set ws = Nothing
-        On Error Resume Next
-        Set ws = mTargetWb.Worksheets(CStr(sheetNames(i)))
-        On Error GoTo EH
-        If ws Is Nothing Then
-            Err.Raise vbObjectError + 1100, , "印刷対象のシートが見つかりません: " & CStr(sheetNames(i))
-        End If
-        If i = 1 Then
-            ws.Select
-        Else
-            ws.Select Replace:=False
-        End If
-    Next i
-
-    If selCount > 1 Then
-        ActiveWindow.selectedSheets.PrintOut
-    Else
+    If Not modPdfExport.PdfExport_IsWorkbookAvailable(printWb) Then Err.Raise vbObjectError + 1106, , "対象ブックが閉じられました。"
+    If names.Count = 1 Then
+        currentSheet = CStr(names(1))
+        Set ws = GetVisiblePrintWorksheet(printWb, currentSheet)
+        If ws Is Nothing Then Err.Raise vbObjectError + 1107, , "印刷対象シートが利用できません: " & currentSheet
+        printCallStarted = True
         If allPages Then
             ws.PrintOut
         Else
-            ws.PrintOut From:=f, To:=t
+            ws.PrintOut From:=fromPage, To:=toPage
         End If
+        printCallStarted = False
+        printJobs = 1
+    ElseIf separateMode Then
+        For i = 1 To names.Count
+            If Not modPdfExport.PdfExport_IsWorkbookAvailable(printWb) Then Err.Raise vbObjectError + 1108, , "対象ブックが閉じられました。"
+            currentSheet = CStr(names(i))
+            Set ws = GetVisiblePrintWorksheet(printWb, currentSheet)
+            If ws Is Nothing Then Err.Raise vbObjectError + 1109, , "印刷対象シートが利用できません: " & currentSheet
+            printCallStarted = True
+            ws.PrintOut
+            printCallStarted = False
+            printJobs = printJobs + 1
+        Next i
+    Else
+        printWb.Activate
+        If Not (Application.ActiveWorkbook Is printWb) Then Err.Raise vbObjectError + 1110, , "対象ブックをアクティブにできませんでした。"
+        For i = 1 To names.Count
+            currentSheet = CStr(names(i))
+            Set ws = GetVisiblePrintWorksheet(printWb, currentSheet)
+            If ws Is Nothing Then Err.Raise vbObjectError + 1111, , "印刷対象シートが利用できません: " & currentSheet
+            If i = 1 Then ws.Select Else ws.Select Replace:=False
+        Next i
+        If Not PrintSelectionMatchesTarget(printWb, names) Then Err.Raise vbObjectError + 1112, , "対象ブック以外のシートを含む可能性があるため中止しました。"
+        currentSheet = "複数シート"
+        printCallStarted = True
+        Application.ActiveWindow.SelectedSheets.PrintOut
+        printCallStarted = False
+        printJobs = 1
     End If
 
 CleanUp:
     If needRestore Then
+        If Not RestoreAndVerifyPrintInteriors(printWb, captured) Then restoreIssues = restoreIssues & "・塗りつぶしを復元・確認できませんでした。元ブックを開いて対象シートを確認してください。" & vbCrLf
+    End If
+    If stateSaved Then
+        If Not RestorePrintSelection(savedWb, savedSheet, savedSelection) Then restoreIssues = restoreIssues & "・ブック／シート選択状態を復元できませんでした。" & vbCrLf
         On Error Resume Next
-        modNoFillExport.RestoreInteriors mTargetWb, captured
+        Err.Clear
+        Application.ScreenUpdating = savedScreenUpdating
+        If Err.Number <> 0 Then restoreIssues = restoreIssues & "・ScreenUpdating を復元できませんでした。" & vbCrLf
+        Err.Clear
+        Application.EnableEvents = savedEnableEvents
+        If Err.Number <> 0 Then restoreIssues = restoreIssues & "・EnableEvents を復元できませんでした。" & vbCrLf
+        Err.Clear
+        Application.DisplayAlerts = savedDisplayAlerts
+        If Err.Number <> 0 Then restoreIssues = restoreIssues & "・DisplayAlerts を復元できませんでした。" & vbCrLf
         On Error GoTo 0
     End If
-
-    ' [FIX] ActiveSheet/ActiveWorkbookを元に戻す（副作用の最小化）
-    If Not savedActiveWorkbook Is Nothing Then
-        On Error Resume Next
-        savedActiveWorkbook.Activate
-        If Not savedActiveSheet Is Nothing Then
-            savedActiveSheet.Activate
+    If errorNumber <> 0 Or Len(restoreIssues) > 0 Then
+        If errorNumber <> 0 Then
+            msg = "印刷処理中にエラーが発生しました。" & vbCrLf & "エラー番号: " & errorNumber & vbCrLf & "内容: " & errorDescription & vbCrLf & "PrintOut正常終了: " & printJobs & " / " & totalJobs & "件"
+            If printJobs > 0 And printJobs < totalJobs Then msg = msg & vbCrLf & "一部の印刷ジョブのみ送信されました。"
+            If printCallStarted Then msg = msg & vbCrLf & "エラーとなった印刷が受け付けられたか不明です。再送信していません。"
+            If Len(currentSheet) > 0 Then msg = msg & vbCrLf & "処理中のシート: " & currentSheet
+        Else
+            msg = "印刷呼び出し完了後の復元処理に問題があります。" & vbCrLf
         End If
-        On Error GoTo 0
+        If Len(restoreIssues) > 0 Then msg = msg & vbCrLf & "【復元時の問題】" & vbCrLf & restoreIssues
+        MsgBox msg, vbCritical
+    Else
+        MsgBox "PrintOut の呼び出しが完了しました。件数: " & printJobs & "件。実際の印刷完了はプリンター側で確認してください。", vbInformation
     End If
-    Application.ScreenUpdating = savedScreenUpdating
-    Application.EnableEvents = savedEnableEvents
-    Application.DisplayAlerts = savedDisplayAlerts
     Exit Sub
-
+InvalidMode:
+    MsgBox "印刷方式が未選択または不正です。シート別印刷かまとめて印刷を選択してください。", vbExclamation
+    Exit Sub
 EH:
-    Dim msg As String
-    msg = "印刷でエラーが発生しました。" & vbCrLf & _
-          "エラー番号: " & Err.Number & vbCrLf & _
-          "内容: " & Err.Description
-    MsgBox msg, vbExclamation
+    errorNumber = Err.Number
+    errorDescription = Err.Description
+    Err.Clear
     Resume CleanUp
 End Sub
+
+
+Private Function GetVisiblePrintWorksheet(ByVal wb As Workbook, ByVal sheetName As String) As Worksheet
+    Dim foundSheet As Worksheet
+    On Error Resume Next
+    Set foundSheet = wb.Worksheets(sheetName)
+    On Error GoTo 0
+    If Not foundSheet Is Nothing Then
+        If foundSheet.Visible <> xlSheetVisible Then Set foundSheet = Nothing
+    End If
+    Set GetVisiblePrintWorksheet = foundSheet
+End Function
+
+Private Function PrintSelectionMatchesTarget(ByVal targetWb As Workbook, ByVal names As Collection) As Boolean
+    Dim selectedItems As Object, selectedItem As Object
+    Dim i As Long, found As Boolean
+    If Application.ActiveWorkbook Is Nothing Then Exit Function
+    If Not (Application.ActiveWorkbook Is targetWb) Then Exit Function
+    If Application.ActiveWindow Is Nothing Then Exit Function
+    Set selectedItems = Application.ActiveWindow.SelectedSheets
+    If selectedItems.Count <> names.Count Then Exit Function
+    For Each selectedItem In selectedItems
+        If Not (selectedItem.Parent Is targetWb) Then Exit Function
+        found = False
+        For i = 1 To names.Count
+            If StrComp(CStr(selectedItem.Name), CStr(names(i)), vbBinaryCompare) = 0 Then
+                found = True
+                Exit For
+            End If
+        Next i
+        If Not found Then Exit Function
+    Next selectedItem
+    PrintSelectionMatchesTarget = True
+End Function
+
+Private Function PrintInteriorsAreClear(ByVal wb As Workbook, ByVal captured As Object) As Boolean
+    Dim key As Variant, parts As Variant
+    Dim ws As Worksheet, cell As Range
+    If wb Is Nothing Then Exit Function
+    If captured Is Nothing Then Exit Function
+    For Each key In captured.Keys
+        parts = Split(CStr(key), "!")
+        Set ws = wb.Worksheets(CStr(parts(0)))
+        Set cell = ws.Range(CStr(parts(1)))
+        If cell.Interior.Pattern <> xlNone Then Exit Function
+    Next key
+    PrintInteriorsAreClear = True
+End Function
+
+
+Private Function RestoreAndVerifyPrintInteriors(ByVal wb As Workbook, ByVal captured As Object) As Boolean
+    On Error GoTo RestoreFailed
+    modNoFillExport.RestoreInteriors wb, captured
+    RestoreAndVerifyPrintInteriors = PrintInteriorsMatchSnapshot(wb, captured)
+    Exit Function
+RestoreFailed:
+    Err.Clear
+End Function
+
+Private Function PrintInteriorsMatchSnapshot(ByVal wb As Workbook, ByVal captured As Object) As Boolean
+    Dim key As Variant, parts As Variant, info As Variant
+    Dim ws As Worksheet, cell As Range
+    If wb Is Nothing Then Exit Function
+    If captured Is Nothing Then Exit Function
+    For Each key In captured.Keys
+        parts = Split(CStr(key), "!")
+        Set ws = wb.Worksheets(CStr(parts(0)))
+        Set cell = ws.Range(CStr(parts(1)))
+        info = captured(key)
+        If cell.Interior.Pattern <> info(1) Or cell.Interior.Color <> info(2) Then Exit Function
+    Next key
+    PrintInteriorsMatchSnapshot = True
+End Function
+
+Private Function RestorePrintSelection(ByVal savedWb As Workbook, ByVal savedSheet As Object, ByVal savedNames As Collection) As Boolean
+    Dim i As Long
+    On Error GoTo RestoreFailed
+    If savedWb Is Nothing Then
+        RestorePrintSelection = True
+        Exit Function
+    End If
+    savedWb.Activate
+    If Not savedNames Is Nothing Then
+        For i = 1 To savedNames.Count
+            If i = 1 Then
+                savedWb.Sheets(CStr(savedNames(i))).Select
+            Else
+                savedWb.Sheets(CStr(savedNames(i))).Select Replace:=False
+            End If
+        Next i
+    End If
+    If Not savedSheet Is Nothing Then savedSheet.Activate
+    RestorePrintSelection = True
+    Exit Function
+RestoreFailed:
+    Err.Clear
+End Function
 
 '---------------------- 内部処理 ------------------------------
 

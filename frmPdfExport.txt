@@ -40,7 +40,7 @@ Private Sub UserForm_Initialize()
         .StartUpPosition = 1          ' 1 = CenterOwner（中央表示）
         .Zoom = 100                   ' ズーム倍率を固定（これが変動の原因になる）
         .Width = 600                  ' 横幅
-        .Height = 400                 ' 高さ
+        .Height = 500                 ' 高さ
     End With
 
     ' === 必須コントロールの存在チェック ===
